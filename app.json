@@ -1,0 +1,86 @@
+{
+  "expo": {
+    "name": "AdvocateAI",
+    "slug": "advocate-ai",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "automatic",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0a0a0a"
+    },
+    "scheme": "advocateai",
+    "plugins": [
+      "expo-router",
+      "expo-sqlite",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "AdvocateAI needs access to your photos to import document images."
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "AdvocateAI needs camera access to scan your documents."
+        }
+      ],
+      [
+        "expo-document-picker",
+        {
+          "iCloudContainerEnvironment": "Production"
+        }
+      ],
+      "expo-audio",
+      "expo-font",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#4A90E2",
+          "sounds": []
+        }
+      ]
+    ],
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#0a0a0a"
+      },
+      "package": "org.advocateai.app",
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS"
+      ]
+    },
+    "ios": {
+      "bundleIdentifier": "org.advocateai.app",
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSCameraUsageDescription": "AdvocateAI uses the camera to scan your documents. Photos are processed on-device and never uploaded.",
+        "NSMicrophoneUsageDescription": "AdvocateAI uses the microphone for voice commands to help users who have difficulty typing.",
+        "NSPhotoLibraryUsageDescription": "AdvocateAI can import documents from your photo library.",
+        "NSDocumentsFolderUsageDescription": "AdvocateAI saves generated letters to your device.",
+        "UIBackgroundModes": [
+          "fetch"
+        ],
+        "NSAllowsArbitraryLoads": false
+      }
+    },
+    "experiments": {
+      "typedRoutes": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "94b850ee-c71b-49c9-b8ed-f51b033e7014"
+      }
+    },
+    "owner": "tibsolg21"
+  }
+}
