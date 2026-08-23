@@ -70,7 +70,8 @@
         "UIBackgroundModes": [
           "fetch"
         ],
-        "NSAllowsArbitraryLoads": false
+        "NSAllowsArbitraryLoads": false,
+        "ITSAppUsesNonExemptEncryption": false
       }
     },
     "experiments": {
