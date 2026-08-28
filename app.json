@@ -42,7 +42,9 @@
           "color": "#4A90E2",
           "sounds": []
         }
-      ]
+      ],
+      "expo-secure-store",
+      "expo-asset"
     ],
     "android": {
       "adaptiveIcon": {
@@ -55,7 +57,9 @@
         "android.permission.READ_EXTERNAL_STORAGE",
         "android.permission.WRITE_EXTERNAL_STORAGE",
         "android.permission.RECORD_AUDIO",
-        "android.permission.MODIFY_AUDIO_SETTINGS"
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.INTERNET",
+        "android.permission.ACCESS_NETWORK_STATE"
       ],
       "versionCode": 9
     },
