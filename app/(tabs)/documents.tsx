@@ -1,7 +1,8 @@
 import React, { useCallback, useState } from 'react'
 import {
-  View, Text, FlatList, StyleSheet, TextInput, TouchableOpacity, Alert,
+  View, Text, FlatList, StyleSheet, TextInput, TouchableOpacity, Alert, ActivityIndicator,
 } from 'react-native'
+import { SafeAreaView } from 'react-native-safe-area-context'
 import { router, useFocusEffect } from 'expo-router'
 import { MaterialIcons } from '@expo/vector-icons'
 import { getAllDocuments, deleteDocument } from '@/documents/store'
@@ -12,11 +13,13 @@ import type { ScannedDocument } from '@/types'
 export default function DocumentsScreen() {
   const [docs, setDocs] = useState<ScannedDocument[]>([])
   const [query, setQuery] = useState('')
+  const [loading, setLoading] = useState(true)
 
   useFocusEffect(
     useCallback(() => {
       let active = true
-      getAllDocuments().then(d => { if (active) setDocs(d) })
+      setLoading(true)
+      getAllDocuments().then(d => { if (active) { setDocs(d); setLoading(false) } })
       return () => { active = false }
     }, [])
   )
@@ -48,8 +51,18 @@ export default function DocumentsScreen() {
     )
   }
 
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.container} edges={['top']}>
+        <View style={styles.centered}>
+          <ActivityIndicator color={Colors.primary} size="large" />
+        </View>
+      </SafeAreaView>
+    )
+  }
+
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top']}>
       {/* Search bar */}
       <View style={styles.searchBar}>
         <MaterialIcons name="search" size={20} color={Colors.textMuted} />
@@ -103,12 +116,13 @@ export default function DocumentsScreen() {
           </View>
         }
       />
-    </View>
+    </SafeAreaView>
   )
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
+  centered: { flex: 1, alignItems: 'center', justifyContent: 'center' },
 
   searchBar: {
     flexDirection: 'row',
@@ -128,7 +142,7 @@ const styles = StyleSheet.create({
     color: Colors.textPrimary,
   },
 
-  list: { paddingHorizontal: Spacing.lg, paddingBottom: Spacing.xl },
+  list: { paddingHorizontal: Spacing.lg, paddingBottom: 80 },
 
   empty: { alignItems: 'center', gap: Spacing.md, paddingVertical: Spacing.xxl },
   emptyTitle: { fontSize: FontSize.lg, fontWeight: '700', color: Colors.textSecondary },

@@ -1,7 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react'
 import {
   View, Text, ScrollView, TextInput, StyleSheet, Alert, ActivityIndicator,
+  KeyboardAvoidingView, Platform,
 } from 'react-native'
+import { SafeAreaView } from 'react-native-safe-area-context'
 import { router, useLocalSearchParams } from 'expo-router'
 import * as Sharing from 'expo-sharing'
 import { MaterialIcons } from '@expo/vector-icons'
@@ -72,7 +74,7 @@ export default function LetterScreen() {
           content: text,
           createdAt: Date.now(),
         }
-        saveLetter(generated)
+        await saveLetter(generated)
         setLetter(generated)
       }
     } catch (err: unknown) {
@@ -114,7 +116,12 @@ export default function LetterScreen() {
     : letterTitle ?? letterType?.replace('_', ' ') ?? 'Letter'
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top']}>
+    <KeyboardAvoidingView
+      style={styles.flex}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 60 : 0}
+    >
       <StepIndicator steps={STEPS} currentStep={3} />
 
       {/* Toolbar */}
@@ -136,6 +143,16 @@ export default function LetterScreen() {
           />
         </View>
       </View>
+
+      {/* Disclaimer */}
+      {!generating && content.length > 0 && (
+        <View style={styles.disclaimer}>
+          <MaterialIcons name="info-outline" size={13} color={Colors.textMuted} />
+          <Text style={styles.disclaimerText}>
+            AI-generated draft — not legal or medical advice. Review carefully before sending.
+          </Text>
+        </View>
+      )}
 
       {/* Letter content */}
       <ScrollView style={styles.scroll} contentContainerStyle={styles.scrollContent}>
@@ -197,12 +214,14 @@ export default function LetterScreen() {
           accessibilityHint="Export this letter as a PDF you can print or email"
         />
       </View>
-    </View>
+    </KeyboardAvoidingView>
+    </SafeAreaView>
   )
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
+  flex: { flex: 1 },
   scroll: { flex: 1 },
   scrollContent: { padding: Spacing.lg, paddingBottom: 120 },
 
@@ -254,6 +273,23 @@ const styles = StyleSheet.create({
     color: Colors.textPrimary,
     lineHeight: 26,
     fontFamily: 'monospace',
+  },
+
+  disclaimer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    paddingHorizontal: Spacing.lg,
+    paddingVertical: Spacing.xs,
+    backgroundColor: Colors.surfaceAlt,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.border,
+  },
+  disclaimerText: {
+    flex: 1,
+    fontSize: FontSize.xs,
+    color: Colors.textMuted,
+    lineHeight: 18,
   },
 
   footer: {

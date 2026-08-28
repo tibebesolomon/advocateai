@@ -1,7 +1,8 @@
 import React, { useCallback, useState } from 'react'
 import {
-  View, Text, FlatList, TouchableOpacity, StyleSheet, Alert,
+  View, Text, FlatList, TouchableOpacity, StyleSheet, Alert, ActivityIndicator,
 } from 'react-native'
+import { SafeAreaView } from 'react-native-safe-area-context'
 import { router, useFocusEffect } from 'expo-router'
 import * as Sharing from 'expo-sharing'
 import { MaterialIcons } from '@expo/vector-icons'
@@ -27,10 +28,12 @@ const TYPE_ICONS: Record<string, string> = {
 
 export default function LettersScreen() {
   const [letters, setLetters] = useState<GeneratedLetter[]>([])
+  const [loading, setLoading] = useState(true)
 
   useFocusEffect(
     useCallback(() => {
-      setLetters(getAllLetters())
+      setLoading(true)
+      getAllLetters().then(l => { setLetters(l); setLoading(false) })
     }, [])
   )
 
@@ -59,8 +62,18 @@ export default function LettersScreen() {
     ])
   }
 
+  if (loading) {
+    return (
+      <SafeAreaView style={styles.container} edges={['top']}>
+        <View style={styles.centered}>
+          <ActivityIndicator color={Colors.primary} size="large" />
+        </View>
+      </SafeAreaView>
+    )
+  }
+
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top']}>
       <FlatList
         data={letters}
         keyExtractor={(item) => item.id}
@@ -88,7 +101,7 @@ export default function LettersScreen() {
           </View>
         }
       />
-    </View>
+    </SafeAreaView>
   )
 }
 
@@ -150,7 +163,8 @@ function LetterRow({
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
-  list: { padding: Spacing.lg, paddingBottom: Spacing.xxl },
+  centered: { flex: 1, alignItems: 'center', justifyContent: 'center' },
+  list: { padding: Spacing.lg, paddingBottom: 80 },
 
   empty: { alignItems: 'center', gap: Spacing.md, paddingVertical: Spacing.xxl },
   emptyTitle: { fontSize: FontSize.lg, fontWeight: '700', color: Colors.textSecondary },

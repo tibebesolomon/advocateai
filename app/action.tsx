@@ -1,13 +1,16 @@
 import React, { useEffect, useRef, useState } from 'react'
 import {
   View, Text, ScrollView, TouchableOpacity, TextInput, StyleSheet,
-  Alert, ActivityIndicator,
+  Alert, ActivityIndicator, Linking, KeyboardAvoidingView, Platform,
 } from 'react-native'
+import { SafeAreaView } from 'react-native-safe-area-context'
 import * as Clipboard from 'expo-clipboard'
 import { router, useLocalSearchParams } from 'expo-router'
 import * as Sharing from 'expo-sharing'
 import { MaterialIcons } from '@expo/vector-icons'
 import { aiEngine, DEMO_MODE_NOTICE } from '@/ai/engine'
+import { SpeakButton } from '@/ui/components/SpeakButton'
+import { buildAnalysisSpeech, Announce } from '@/voice/tts'
 import {
   getDocument, updateDocumentAnalysis, saveLetter, getLettersForDocument,
   getOrCreateThread, addThreadMessage, makeId, updateLetterContent,
@@ -20,6 +23,10 @@ import { StepIndicator } from '@/ui/components/StepIndicator'
 import { ActionButton } from '@/ui/components/ActionButton'
 import { Colors, FontSize, Radius, Spacing, severityColors, severityLabel } from '@/ui/theme'
 import type { AnalysisResult, ActionType, GeneratedLetter, ScannedDocument, DeadlineInfo, AnomalyFlag } from '@/types'
+
+function extractAmounts(text: string): string[] {
+  return [...new Set([...text.matchAll(/\$[\d,]+(?:\.\d{2})?/g)].map(m => m[0]))].slice(0, 5)
+}
 
 const STEPS = ['Scan', 'Review', 'Analyze', 'Act']
 
@@ -93,7 +100,7 @@ export default function ActionScreen() {
     setDoc(loaded)
 
     // Restore deadline alerts state
-    const existingAlerts = getAlertsForDocument(id)
+    const existingAlerts = await getAlertsForDocument(id)
     setAlertsScheduled(existingAlerts.length > 0)
 
     // Calculate deadlines
@@ -124,6 +131,7 @@ export default function ActionScreen() {
         setAnalysis(result)
         await updateDocumentAnalysis(document.id, result)
         loadOrGenerate(document, result)
+        Announce.analysisReady()
 
         // Run anomaly detection in parallel after analysis completes
         runAnomalyDetection(document, result)
@@ -147,8 +155,9 @@ export default function ActionScreen() {
   }
 
   async function runAnomalyDetection(document: ScannedDocument, result: AnalysisResult) {
-    // Only run for document types with meaningful anomaly risk
+    // Skip for general docs and clean low-severity bills — model hallucinates on clean docs
     if (document.type === 'GENERAL') return
+    if (result.severity === 'LOW') return
     setAnomalyLoading(true)
     try {
       const detected = await aiEngine.detectAnomalies(document)
@@ -167,8 +176,8 @@ export default function ActionScreen() {
     }
   }
 
-  function loadOrGenerate(document: ScannedDocument, result: AnalysisResult) {
-    const existing = getLettersForDocument(document.id)
+  async function loadOrGenerate(document: ScannedDocument, result: AnalysisResult) {
+    const existing = await getLettersForDocument(document.id)
     if (existing.length > 0) {
       const latest = existing[0]
       setOutputType(latest.type as ActionType)
@@ -192,32 +201,52 @@ export default function ActionScreen() {
 
     const type = action.type as ActionType
     setOutputType(type)
-    setOutputGenerating(true)
+    setOutputGenerating(false)
     setOutputText('')
     setOutputLetter(null)
     setPdfPath(null)
     abortRef.current = false
 
+    // INFORMATION means the document looks fine — show the finding directly, no AI generation needed
+    if (type === 'INFORMATION') {
+      const infoText = [
+        action.title,
+        action.description,
+        ...(result.keyFindings.length > 0 ? ['\nKey Points:', ...result.keyFindings.map(f => `• ${f}`)] : []),
+        result.rightsReminder ? `\nYour Rights: ${result.rightsReminder}` : '',
+      ].filter(Boolean).join('\n')
+      setOutputText(infoText)
+      const letter: GeneratedLetter = {
+        id: makeId(), documentId: document.id, type, content: infoText, createdAt: Date.now(),
+      }
+      await saveLetter(letter)
+      setOutputLetter(letter)
+      return
+    }
+
+    setOutputGenerating(true)
+
     try {
       let text: string
-      if (type === 'INFORMATION') {
-        text = `${action.title}\n\n${action.description}`
-        setOutputText(text)
-      } else if (type === 'CALL_SCRIPT') {
+      if (type === 'CALL_SCRIPT') {
         text = await aiEngine.generateCallScript(document, (token) => {
           if (!abortRef.current) setOutputText(t => t + token)
         })
       } else {
+        // DISPUTE_LETTER, APPEAL_LETTER, FORM_FILL
         text = await aiEngine.generateLetter(document, type, (token) => {
           if (!abortRef.current) setOutputText(t => t + token)
         })
       }
 
       if (!abortRef.current) {
+        // Always sync final text — covers edge case where streaming was incomplete
+        const finalText = text.trim() || 'The AI could not generate content for this document. Tap Regenerate to try again.'
+        setOutputText(finalText)
         const letter: GeneratedLetter = {
-          id: makeId(), documentId: document.id, type, content: text, createdAt: Date.now(),
+          id: makeId(), documentId: document.id, type, content: finalText, createdAt: Date.now(),
         }
-        saveLetter(letter)
+        await saveLetter(letter)
         setOutputLetter(letter)
       }
     } catch {
@@ -233,7 +262,7 @@ export default function ActionScreen() {
     if (!doc) return
 
     if (alertsScheduled) {
-      const existing = getAlertsForDocument(doc.id)
+      const existing = await getAlertsForDocument(doc.id)
       const allNotifIds = existing.flatMap(a => a.notifIds)
       await cancelAlertsForDocument(allNotifIds)
       deleteAlertsForDocument(doc.id)
@@ -251,7 +280,7 @@ export default function ActionScreen() {
       )
       if (notifIds.length > 0) {
         const primaryDeadline = deadlines[0]
-        saveScheduledAlert({
+        await saveScheduledAlert({
           id: makeId(),
           documentId: doc.id,
           notifIds,
@@ -278,10 +307,10 @@ export default function ActionScreen() {
 
   function startEdit() { setEditedText(outputText); setEditing(true); setPdfPath(null) }
 
-  function saveEdit() {
+  async function saveEdit() {
     setOutputText(editedText)
     setEditing(false)
-    if (outputLetter) updateLetterContent(outputLetter.id, editedText)
+    if (outputLetter) await updateLetterContent(outputLetter.id, editedText)
   }
 
   async function copyText() {
@@ -315,12 +344,44 @@ export default function ActionScreen() {
     await Sharing.shareAsync(pdfPath, { mimeType: 'application/pdf' })
   }
 
+  function confirmAndExport(afterConfirm: () => void) {
+    if (outputType === 'INFORMATION') { afterConfirm(); return }
+    const amounts = extractAmounts(outputText)
+    const parts: string[] = []
+    if (amounts.length > 0) parts.push(`Amounts: ${amounts.join(', ')}`)
+    if (analysis?.deadline) parts.push(`Deadline: ${analysis.deadline}`)
+    const verifyLines = parts.length > 0
+      ? `\n\nVerify these match your original document:\n${parts.join('\n')}`
+      : ''
+    Alert.alert(
+      'Check Before Exporting',
+      `AI letters can contain errors. Review the letter carefully before sending it to anyone.${verifyLines}\n\nThis is not legal advice.`,
+      [
+        { text: 'Review Letter', style: 'cancel' },
+        { text: 'Looks Correct — Export', onPress: afterConfirm },
+      ]
+    )
+  }
+
   async function exportCaseBundle() {
     if (!doc) return
+    const confirmed = await new Promise<boolean>((resolve) =>
+      Alert.alert(
+        'Export Case Bundle',
+        'This PDF contains your full case — document text, AI analysis, letters, and correspondence.\n\n' +
+        'Only share it with trusted parties (e.g. your lawyer or legal aid). ' +
+        'Once shared via messaging or email it may be stored by those services.',
+        [
+          { text: 'Cancel', style: 'cancel', onPress: () => resolve(false) },
+          { text: 'Export', onPress: () => resolve(true) },
+        ]
+      )
+    )
+    if (!confirmed) return
     setExportingBundle(true)
     try {
-      const letters = getLettersForDocument(doc.id)
-      const thread = getOrCreateThread(doc.id)
+      const letters = await getLettersForDocument(doc.id)
+      const thread = await getOrCreateThread(doc.id)
       const path = await generateCaseBundle(doc, letters, thread.messages.length > 0 ? thread : null)
       await Sharing.shareAsync(path, { mimeType: 'application/pdf' })
     } catch (err: unknown) {
@@ -342,11 +403,11 @@ export default function ActionScreen() {
     router.push({ pathname: '/chat' as any, params: { id: doc.id } })
   }
 
-  function openThread() {
+  async function openThread() {
     if (!doc || !outputLetter) return
-    const thread = getOrCreateThread(doc.id)
+    const thread = await getOrCreateThread(doc.id)
     if (thread.messages.length === 0) {
-      addThreadMessage({
+      await addThreadMessage({
         threadId: thread.id, sender: 'user', content: outputLetter.content,
         isAiGenerated: true, createdAt: Date.now(),
       })
@@ -361,7 +422,12 @@ export default function ActionScreen() {
   const sevColors = analysis ? severityColors(analysis.severity) : null
 
   return (
-    <View style={styles.container}>
+    <SafeAreaView style={styles.container} edges={['top']}>
+    <KeyboardAvoidingView
+      style={styles.flex}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={Platform.OS === 'ios' ? 60 : 0}
+    >
       <StepIndicator steps={STEPS} currentStep={analysisLoading ? 2 : 3} />
 
       <ScrollView contentContainerStyle={styles.scroll}>
@@ -407,6 +473,17 @@ export default function ActionScreen() {
               {analysis.deadline && (
                 <Text style={styles.deadlineText} numberOfLines={1}>⏰ {analysis.deadline}</Text>
               )}
+              <SpeakButton
+                text={buildAnalysisSpeech({
+                  summary: analysis.summary,
+                  severity: analysis.severity,
+                  keyFindings: analysis.keyFindings,
+                  rightsReminder: analysis.rightsReminder,
+                  deadline: analysis.deadline,
+                })}
+                size={20}
+                accessibilityLabel="Read analysis aloud"
+              />
               <MaterialIcons
                 name={summaryExpanded ? 'expand-less' : 'expand-more'}
                 size={20}
@@ -446,6 +523,26 @@ export default function ActionScreen() {
               <Text style={styles.advocateCardSub}>Tell your story — get personalized advice & next steps</Text>
             </View>
             <MaterialIcons name="chevron-right" size={22} color={Colors.primary} />
+          </TouchableOpacity>
+        )}
+
+        {/* Free legal aid — shown for high-stakes documents */}
+        {analysis && (analysis.severity === 'HIGH' || analysis.severity === 'URGENT') && (
+          <TouchableOpacity
+            style={styles.legalAidBanner}
+            onPress={() => Linking.openURL('https://www.lawhelp.org')}
+            accessibilityRole="link"
+            accessibilityLabel="Find free legal help near you — opens lawhelp.org in browser"
+          >
+            <MaterialIcons name="people" size={20} color={Colors.info} />
+            <View style={styles.legalAidContent}>
+              <Text style={styles.legalAidTitle}>Find Free Legal Help Near You</Text>
+              <Text style={styles.legalAidSub}>
+                For serious situations, free legal aid clinics can help at no cost.
+                lawhelp.org finds one in your area.
+              </Text>
+            </View>
+            <MaterialIcons name="open-in-new" size={16} color={Colors.info} />
           </TouchableOpacity>
         )}
 
@@ -579,6 +676,11 @@ export default function ActionScreen() {
               </Text>
               {!outputGenerating && outputText && (
                 <View style={styles.outputActions}>
+                  <SpeakButton
+                    text={outputText}
+                    size={20}
+                    accessibilityLabel="Read letter aloud"
+                  />
                   <TouchableOpacity onPress={copyText} style={styles.toolBtn}
                     accessibilityLabel={copyFeedback ? 'Copied!' : 'Copy to clipboard'}>
                     <MaterialIcons
@@ -669,42 +771,46 @@ export default function ActionScreen() {
           ) : (
             <>
               <ActionButton
-                label="Talk to Advocate"
-                variant="primary" size="md" style={{ flex: 1 }}
+                label="Talk to Your Advocate"
+                variant="primary" size="md" style={{ width: '100%' }}
                 onPress={openChat}
                 icon={<MaterialIcons name="shield" size={20} color={Colors.primaryText} />}
               />
-              <ActionButton
-                label={pdfPath ? 'Share PDF' : 'Save PDF'}
-                variant="secondary" size="md"
-                loading={buildingPdf}
-                disabled={!outputText || outputGenerating}
-                onPress={pdfPath ? sharePDF : downloadPDF}
-                icon={<MaterialIcons
-                  name={pdfPath ? 'share' : 'picture-as-pdf'}
-                  size={20} color={Colors.textPrimary}
-                />}
-              />
-              <ActionButton
-                label={exportingBundle ? '…' : 'Export'}
-                variant="ghost" size="md"
-                loading={exportingBundle}
-                disabled={!doc}
-                onPress={exportCaseBundle}
-                icon={<MaterialIcons name="folder-zip" size={20} color={Colors.primary} />}
-              />
+              <View style={styles.footerRow2}>
+                <ActionButton
+                  label={pdfPath ? 'Share PDF' : 'Save PDF'}
+                  variant="secondary" size="sm" style={{ flex: 1 }}
+                  loading={buildingPdf}
+                  disabled={!outputText || outputGenerating}
+                  onPress={() => confirmAndExport(pdfPath ? sharePDF : downloadPDF)}
+                  icon={<MaterialIcons
+                    name={pdfPath ? 'share' : 'picture-as-pdf'}
+                    size={18} color={Colors.textPrimary}
+                  />}
+                />
+                <ActionButton
+                  label={exportingBundle ? '…' : 'Export Case'}
+                  variant="ghost" size="sm" style={{ flex: 1 }}
+                  loading={exportingBundle}
+                  disabled={!doc}
+                  onPress={exportCaseBundle}
+                  icon={<MaterialIcons name="folder-zip" size={18} color={Colors.primary} />}
+                />
+              </View>
             </>
           )}
         </View>
       )}
-    </View>
+    </KeyboardAvoidingView>
+    </SafeAreaView>
   )
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: Colors.background },
+  flex: { flex: 1 },
   centered: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  scroll: { padding: Spacing.lg, paddingBottom: 120 },
+  scroll: { padding: Spacing.lg, paddingBottom: 160 },
 
   demoBanner: {
     flexDirection: 'row', alignItems: 'center', gap: 8,
@@ -840,7 +946,21 @@ const styles = StyleSheet.create({
 
   footer: {
     position: 'absolute', bottom: 0, left: 0, right: 0,
-    flexDirection: 'row', gap: Spacing.sm, padding: Spacing.lg,
+    flexDirection: 'column', gap: Spacing.sm,
+    paddingHorizontal: Spacing.lg, paddingTop: Spacing.md, paddingBottom: Spacing.lg,
     backgroundColor: Colors.background, borderTopWidth: 1, borderTopColor: Colors.border,
   },
+  footerRow2: {
+    flexDirection: 'row', gap: Spacing.sm,
+  },
+
+  legalAidBanner: {
+    flexDirection: 'row', alignItems: 'center', gap: Spacing.sm,
+    backgroundColor: '#0D1F2D', borderRadius: Radius.lg,
+    borderWidth: 1, borderColor: Colors.info,
+    padding: Spacing.md, marginBottom: Spacing.md,
+  },
+  legalAidContent: { flex: 1, gap: 2 },
+  legalAidTitle: { fontSize: FontSize.sm, fontWeight: '700', color: Colors.info },
+  legalAidSub: { fontSize: FontSize.xs, color: Colors.textSecondary, lineHeight: 17 },
 })

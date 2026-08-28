@@ -84,16 +84,18 @@ function db(): SQLite.SQLiteDatabase {
   if (!_db) {
     _db = SQLite.openDatabaseSync('advocateai.db')
     _db.execSync(SCHEMA)
-    // Add columns introduced in v2 (idempotent — ALTER TABLE ignores existing columns)
+    // Idempotent migrations
     try { _db.execSync('ALTER TABLE documents ADD COLUMN table_text TEXT') } catch { /* already exists */ }
   }
   return _db
 }
 
-// ─── Documents (async — raw_text is AES-GCM encrypted) ───────────────────────
+// ─── Documents (all sensitive columns AES-GCM encrypted) ─────────────────────
 
 export async function saveDocument(doc: ScannedDocument): Promise<void> {
-  const encText = await encryptField(doc.rawText)
+  const encText     = await encryptField(doc.rawText)
+  const encMeta     = await encryptField(JSON.stringify(doc.metadata))
+  const encImageUri = doc.imageUri ? await encryptField(doc.imageUri) : null
   const encAnalysis = doc.analysisResult
     ? await encryptField(JSON.stringify(doc.analysisResult))
     : null
@@ -107,8 +109,8 @@ export async function saveDocument(doc: ScannedDocument): Promise<void> {
       doc.type,
       encText,
       doc.tableText ?? null,
-      doc.imageUri ?? null,
-      JSON.stringify(doc.metadata),
+      encImageUri,
+      encMeta,
       encAnalysis,
       doc.createdAt,
     ]
@@ -135,49 +137,54 @@ export async function updateDocumentAnalysis(id: string, analysis: object): Prom
 }
 
 async function rowToDocument(row: DocumentRow): Promise<ScannedDocument> {
-  const rawText = await decryptField(row.raw_text)
+  const rawText     = await decryptField(row.raw_text)
+  const metaStr     = await decryptField(row.metadata)
+  const imageUri    = row.image_uri ? await decryptField(row.image_uri) : undefined
   const analysisStr = row.analysis ? await decryptField(row.analysis) : null
   return {
     id: row.id,
     type: row.type as DocumentType,
     rawText,
     tableText: row.table_text ?? undefined,
-    imageUri: row.image_uri ?? undefined,
-    metadata: JSON.parse(row.metadata),
+    imageUri,
+    metadata: JSON.parse(metaStr),
     analysisResult: analysisStr ? JSON.parse(analysisStr) : undefined,
     createdAt: row.created_at,
   }
 }
 
-// ─── Letters ─────────────────────────────────────────────────────────────────
+// ─── Letters (content AES-GCM encrypted) ─────────────────────────────────────
 
-export function saveLetter(letter: GeneratedLetter): void {
+export async function saveLetter(letter: GeneratedLetter): Promise<void> {
+  const encContent = await encryptField(letter.content)
   db().runSync(
     `INSERT OR REPLACE INTO letters
       (id, document_id, type, content, pdf_path, created_at)
      VALUES (?, ?, ?, ?, ?, ?)`,
-    [letter.id, letter.documentId, letter.type, letter.content, letter.pdfPath ?? null, letter.createdAt]
+    [letter.id, letter.documentId, letter.type, encContent, letter.pdfPath ?? null, letter.createdAt]
   )
 }
 
-export function getLettersForDocument(documentId: string): GeneratedLetter[] {
+export async function getLettersForDocument(documentId: string): Promise<GeneratedLetter[]> {
   const rows = db().getAllSync<LetterRow>(
     'SELECT * FROM letters WHERE document_id = ? ORDER BY created_at DESC',
     [documentId]
   )
-  return rows.map(rowToLetter)
+  return Promise.all(rows.map(rowToLetter))
 }
 
-export function getAllLetters(): GeneratedLetter[] {
+export async function getAllLetters(): Promise<GeneratedLetter[]> {
   const rows = db().getAllSync<LetterRow>('SELECT * FROM letters ORDER BY created_at DESC')
-  return rows.map(rowToLetter)
+  return Promise.all(rows.map(rowToLetter))
 }
 
-export function updateLetterContent(id: string, content: string): void {
-  db().runSync('UPDATE letters SET content = ? WHERE id = ?', [content, id])
+export async function updateLetterContent(id: string, content: string): Promise<void> {
+  const encContent = await encryptField(content)
+  db().runSync('UPDATE letters SET content = ? WHERE id = ?', [encContent, id])
 }
 
 export function updateLetterPdfPath(id: string, pdfPath: string): void {
+  if (!isValidStoragePath(pdfPath)) throw new Error('INVALID_PDF_PATH')
   db().runSync('UPDATE letters SET pdf_path = ? WHERE id = ?', [pdfPath, id])
 }
 
@@ -185,56 +192,63 @@ export function deleteLetter(id: string): void {
   db().runSync('DELETE FROM letters WHERE id = ?', [id])
 }
 
-function rowToLetter(row: LetterRow): GeneratedLetter {
+async function rowToLetter(row: LetterRow): Promise<GeneratedLetter> {
+  const content = await decryptField(row.content)
   return {
     id: row.id,
     documentId: row.document_id,
     type: row.type as ActionType,
-    content: row.content,
+    content,
     pdfPath: row.pdf_path ?? undefined,
     createdAt: row.created_at,
   }
 }
 
-// ─── Scheduled Alerts ─────────────────────────────────────────────────────────
+// ─── Scheduled Alerts (label + date AES-GCM encrypted) ───────────────────────
 
-export function saveScheduledAlert(alert: ScheduledAlert): void {
+export async function saveScheduledAlert(alert: ScheduledAlert): Promise<void> {
+  const encLabel = await encryptField(alert.deadlineLabel)
+  const encDate  = await encryptField(alert.deadlineDate)
   db().runSync(
     `INSERT OR REPLACE INTO scheduled_alerts
       (id, document_id, notif_ids, deadline_label, deadline_date, created_at)
      VALUES (?, ?, ?, ?, ?, ?)`,
-    [alert.id, alert.documentId, JSON.stringify(alert.notifIds),
-     alert.deadlineLabel, alert.deadlineDate, alert.createdAt]
+    [alert.id, alert.documentId, JSON.stringify(alert.notifIds), encLabel, encDate, alert.createdAt]
   )
 }
 
-export function getAlertsForDocument(documentId: string): ScheduledAlert[] {
+export async function getAlertsForDocument(documentId: string): Promise<ScheduledAlert[]> {
   const rows = db().getAllSync<AlertRow>(
     'SELECT * FROM scheduled_alerts WHERE document_id = ?',
     [documentId]
   )
-  return rows.map(r => ({
+  return Promise.all(rows.map(async r => ({
     id: r.id,
     documentId: r.document_id,
     notifIds: JSON.parse(r.notif_ids) as string[],
-    deadlineLabel: r.deadline_label,
-    deadlineDate: r.deadline_date,
+    deadlineLabel: await decryptField(r.deadline_label),
+    deadlineDate: await decryptField(r.deadline_date),
     createdAt: r.created_at,
-  }))
+  })))
 }
 
 export function deleteAlertsForDocument(documentId: string): void {
   db().runSync('DELETE FROM scheduled_alerts WHERE document_id = ?', [documentId])
 }
 
-// ─── Threads ─────────────────────────────────────────────────────────────────
+// ─── Threads (content AES-GCM encrypted) ─────────────────────────────────────
 
-export function getOrCreateThread(documentId: string): Thread {
+export async function getOrCreateThread(documentId: string): Promise<Thread> {
   const existing = db().getFirstSync<ThreadRow>(
     'SELECT * FROM threads WHERE document_id = ?', [documentId]
   )
   if (existing) {
-    return { id: existing.id, documentId, messages: getThreadMessages(existing.id), createdAt: existing.created_at }
+    return {
+      id: existing.id,
+      documentId,
+      messages: await getThreadMessages(existing.id),
+      createdAt: existing.created_at,
+    }
   }
   const id = makeId()
   const createdAt = Date.now()
@@ -242,57 +256,59 @@ export function getOrCreateThread(documentId: string): Thread {
   return { id, documentId, messages: [], createdAt }
 }
 
-export function getThreadForDocument(documentId: string): Thread | null {
+export async function getThreadForDocument(documentId: string): Promise<Thread | null> {
   const row = db().getFirstSync<ThreadRow>('SELECT * FROM threads WHERE document_id = ?', [documentId])
   if (!row) return null
-  return { id: row.id, documentId, messages: getThreadMessages(row.id), createdAt: row.created_at }
+  return { id: row.id, documentId, messages: await getThreadMessages(row.id), createdAt: row.created_at }
 }
 
-export function getThreadMessages(threadId: string): ThreadMessage[] {
+export async function getThreadMessages(threadId: string): Promise<ThreadMessage[]> {
   const rows = db().getAllSync<ThreadMessageRow>(
     'SELECT * FROM thread_messages WHERE thread_id = ? ORDER BY created_at ASC',
     [threadId]
   )
-  return rows.map(r => ({
+  return Promise.all(rows.map(async r => ({
     id: r.id,
     threadId: r.thread_id,
     sender: r.sender as 'user' | 'institution',
-    content: r.content,
+    content: await decryptField(r.content),
     isAiGenerated: r.is_ai === 1,
     createdAt: r.created_at,
-  }))
+  })))
 }
 
-export function addThreadMessage(msg: Omit<ThreadMessage, 'id'>): ThreadMessage {
+export async function addThreadMessage(msg: Omit<ThreadMessage, 'id'>): Promise<ThreadMessage> {
   const id = makeId()
+  const encContent = await encryptField(msg.content)
   db().runSync(
     'INSERT INTO thread_messages (id, thread_id, sender, content, is_ai, created_at) VALUES (?, ?, ?, ?, ?, ?)',
-    [id, msg.threadId, msg.sender, msg.content, msg.isAiGenerated ? 1 : 0, msg.createdAt]
+    [id, msg.threadId, msg.sender, encContent, msg.isAiGenerated ? 1 : 0, msg.createdAt]
   )
   return { id, ...msg }
 }
 
-// ─── Advocate Chat ────────────────────────────────────────────────────────────
+// ─── Advocate Chat (content AES-GCM encrypted) ───────────────────────────────
 
-export function getChatMessages(documentId: string): ChatMessage[] {
+export async function getChatMessages(documentId: string): Promise<ChatMessage[]> {
   const rows = db().getAllSync<ChatMessageRow>(
     'SELECT * FROM chat_messages WHERE document_id = ? ORDER BY created_at ASC',
     [documentId]
   )
-  return rows.map(r => ({
+  return Promise.all(rows.map(async r => ({
     id: r.id,
     documentId: r.document_id,
     role: r.role as 'advocate' | 'user',
-    content: r.content,
+    content: await decryptField(r.content),
     createdAt: r.created_at,
-  }))
+  })))
 }
 
-export function addChatMessage(msg: Omit<ChatMessage, 'id'>): ChatMessage {
+export async function addChatMessage(msg: Omit<ChatMessage, 'id'>): Promise<ChatMessage> {
   const id = makeId()
+  const encContent = await encryptField(msg.content)
   db().runSync(
     'INSERT INTO chat_messages (id, document_id, role, content, created_at) VALUES (?, ?, ?, ?, ?)',
-    [id, msg.documentId, msg.role, msg.content, msg.createdAt]
+    [id, msg.documentId, msg.role, encContent, msg.createdAt]
   )
   return { id, ...msg }
 }
@@ -304,5 +320,11 @@ export function clearChatMessages(documentId: string): void {
 // ─── ID generator ─────────────────────────────────────────────────────────────
 
 export function makeId(): string {
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+  const arr = new Uint32Array(2)
+  crypto.getRandomValues(arr)
+  return `${Date.now()}-${arr[0].toString(36)}${arr[1].toString(36)}`
+}
+
+function isValidStoragePath(p: string): boolean {
+  return (p.startsWith('file://') || p.startsWith('/')) && !p.includes('../')
 }

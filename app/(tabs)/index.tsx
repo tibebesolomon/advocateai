@@ -6,6 +6,7 @@ import {
   ScrollView,
   StyleSheet,
   Alert,
+  useWindowDimensions,
 } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context'
 import { router, useFocusEffect } from 'expo-router'
@@ -18,9 +19,12 @@ import { aiEngine } from '@/ai/engine'
 import { getAllDocuments, deleteDocument } from '@/documents/store'
 import { DocumentCard } from '@/ui/components/DocumentCard'
 import { Colors, FontSize, Radius, Spacing, TouchTarget } from '@/ui/theme'
+import { queueCapture } from '@/ocr/pendingCapture'
 import type { ScannedDocument } from '@/types'
 
 export default function HomeScreen() {
+  const { width } = useWindowDimensions()
+  const isTablet = width >= 600
   const [modelReady, setModelReady] = useState<boolean | null>(null)
   const [recentDocs, setRecentDocs] = useState<ScannedDocument[]>([])
 
@@ -47,22 +51,12 @@ export default function HomeScreen() {
   }
 
   async function handleImport() {
-    // iOS document picker excludes the Photos library — offer both options
-    if (Platform.OS === 'ios') {
-      Alert.alert('Import Document', 'Where is your document?', [
-        {
-          text: 'Files App',
-          onPress: importFromFiles,
-        },
-        {
-          text: 'Photos',
-          onPress: importFromPhotos,
-        },
-        { text: 'Cancel', style: 'cancel' },
-      ])
-    } else {
-      await importFromFiles()
-    }
+    // Both platforms: offer Files + Gallery
+    Alert.alert('Import Document', 'Choose source:', [
+      { text: 'Gallery / Photos', onPress: importFromPhotos },
+      { text: 'Files / PDF', onPress: importFromFiles },
+      { text: 'Cancel', style: 'cancel' },
+    ])
   }
 
   async function importFromFiles() {
@@ -72,7 +66,11 @@ export default function HomeScreen() {
         copyToCacheDirectory: true,
       })
       if (!result.canceled && result.assets[0]) {
-        router.push({ pathname: '/review', params: { uri: result.assets[0].uri } })
+        queueCapture({
+          uris: [result.assets[0].uri],
+          mimeType: result.assets[0].mimeType ?? '',
+        })
+        router.push('/review')
       }
     } catch {
       Alert.alert('Import failed', 'Could not open the file. Please try again.')
@@ -87,10 +85,12 @@ export default function HomeScreen() {
     }
     const result = await ImagePicker.launchImageLibraryAsync({
       mediaTypes: 'images' as const,
-      quality: 0.92,
+      quality: 1,
+      allowsMultipleSelection: true,
     })
-    if (!result.canceled && result.assets[0]) {
-      router.push({ pathname: '/review', params: { uri: result.assets[0].uri } })
+    if (!result.canceled && result.assets.length > 0) {
+      queueCapture({ uris: result.assets.map(a => a.uri) })
+      router.push('/review')
     }
   }
 
@@ -135,27 +135,28 @@ export default function HomeScreen() {
           </TouchableOpacity>
         )}
 
-        {/* Primary actions */}
-        <View style={styles.actions}>
+        {/* Primary actions — side-by-side on tablets, stacked on phones */}
+        <View style={[styles.actions, isTablet && styles.actionsTablet]}>
           <TouchableOpacity
-            style={styles.primaryBtn}
+            style={[styles.primaryBtn, isTablet && styles.primaryBtnTablet]}
             onPress={handleScan}
             accessibilityRole="button"
             accessibilityLabel="Scan a document with your camera"
           >
-            <MaterialIcons name="camera-alt" size={36} color={Colors.primaryText} />
+            <MaterialIcons name="camera-alt" size={isTablet ? 44 : 36} color={Colors.primaryText} />
             <Text style={styles.primaryBtnLabel}>Scan Document</Text>
             <Text style={styles.primaryBtnSub}>Point camera at letter or bill</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
-            style={styles.secondaryBtn}
+            style={[styles.secondaryBtn, isTablet && styles.secondaryBtnTablet]}
             onPress={handleImport}
             accessibilityRole="button"
             accessibilityLabel="Import a document from your files or photos"
           >
-            <MaterialIcons name="upload-file" size={28} color={Colors.primary} />
+            <MaterialIcons name="upload-file" size={isTablet ? 34 : 28} color={Colors.primary} />
             <Text style={styles.secondaryBtnLabel}>Import from Files</Text>
+            <Text style={styles.secondaryBtnSub}>Gallery, PDF, or camera roll</Text>
           </TouchableOpacity>
         </View>
 
@@ -230,7 +231,7 @@ const HOW_IT_WORKS = [
 const styles = StyleSheet.create({
   safe: { flex: 1, backgroundColor: Colors.background },
   scroll: { flex: 1 },
-  content: { padding: Spacing.lg, paddingBottom: Spacing.xxl },
+  content: { padding: Spacing.lg, paddingBottom: 80 },
 
   hero: { alignItems: 'center', paddingVertical: Spacing.lg },
   heroIcon: { fontSize: 44, marginBottom: 6 },
@@ -271,6 +272,7 @@ const styles = StyleSheet.create({
   modelReadyText: { fontSize: FontSize.sm, color: Colors.success },
 
   actions: { gap: Spacing.md, marginBottom: Spacing.xl },
+  actionsTablet: { flexDirection: 'row' },
 
   primaryBtn: {
     backgroundColor: Colors.primary,
@@ -281,6 +283,7 @@ const styles = StyleSheet.create({
     minHeight: TouchTarget.large + 40,
     justifyContent: 'center',
   },
+  primaryBtnTablet: { flex: 1 },
   primaryBtnLabel: {
     fontSize: FontSize.xl,
     fontWeight: '800',
@@ -292,7 +295,7 @@ const styles = StyleSheet.create({
   },
 
   secondaryBtn: {
-    flexDirection: 'row',
+    flexDirection: 'column',
     alignItems: 'center',
     justifyContent: 'center',
     gap: Spacing.sm,
@@ -303,10 +306,15 @@ const styles = StyleSheet.create({
     borderColor: Colors.border,
     minHeight: TouchTarget.comfortable,
   },
+  secondaryBtnTablet: { flex: 1 },
   secondaryBtnLabel: {
     fontSize: FontSize.lg,
     fontWeight: '700',
     color: Colors.primary,
+  },
+  secondaryBtnSub: {
+    fontSize: FontSize.sm,
+    color: Colors.textSecondary,
   },
 
   section: { marginBottom: Spacing.xl },

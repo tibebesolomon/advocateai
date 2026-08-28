@@ -7,6 +7,8 @@ import {
 import { router, useLocalSearchParams } from 'expo-router'
 import { MaterialIcons } from '@expo/vector-icons'
 import { SafeAreaView } from 'react-native-safe-area-context'
+import * as Clipboard from 'expo-clipboard'
+import * as Haptics from 'expo-haptics'
 import { aiEngine } from '@/ai/engine'
 import { getDocument } from '@/documents/store'
 import { getChatMessages, addChatMessage, clearChatMessages } from '@/documents/store'
@@ -41,9 +43,18 @@ export default function ChatScreen() {
   const [streamText, setStreamText] = useState('')
   const [showStarters, setShowStarters] = useState(true)
 
+  const [copiedId, setCopiedId] = useState<string | null>(null)
+
   const scrollRef = useRef<ScrollView>(null)
   const inputRef = useRef<TextInput>(null)
   const abortRef = useRef(false)
+
+  async function copyMessage(msg: ChatMessage) {
+    await Clipboard.setStringAsync(msg.content)
+    await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
+    setCopiedId(msg.id)
+    setTimeout(() => setCopiedId(null), 2000)
+  }
 
   useEffect(() => {
     if (!id) return
@@ -57,7 +68,7 @@ export default function ChatScreen() {
     if (!loaded) { Alert.alert('Error', 'Document not found'); router.back(); return }
     setDoc(loaded)
 
-    const existing = getChatMessages(id)
+    const existing = await getChatMessages(id)
     if (existing.length > 0) {
       setMessages(existing)
       setShowStarters(false)
@@ -83,7 +94,7 @@ export default function ChatScreen() {
       if (!abortRef.current) {
         setStreamText('')
         setOpenerLoading(false)
-        const msg = addChatMessage({
+        const msg = await addChatMessage({
           documentId: id,
           role: 'advocate',
           content: full.trim(),
@@ -103,7 +114,7 @@ export default function ChatScreen() {
     setShowStarters(false)
     abortRef.current = false
 
-    const userMsg = addChatMessage({
+    const userMsg = await addChatMessage({
       documentId: id,
       role: 'user',
       content,
@@ -129,7 +140,7 @@ export default function ChatScreen() {
       if (!abortRef.current) {
         setStreamText('')
         setResponding(false)
-        const aiMsg = addChatMessage({
+        const aiMsg = await addChatMessage({
           documentId: id,
           role: 'advocate',
           content: full.trim(),
@@ -201,8 +212,8 @@ export default function ChatScreen() {
 
       <KeyboardAvoidingView
         style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-        keyboardVerticalOffset={0}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 0}
       >
         <ScrollView
           ref={scrollRef}
@@ -236,6 +247,7 @@ export default function ChatScreen() {
           {messages.map((msg, i) => {
             const isAdvocate = msg.role === 'advocate'
             const isLast = i === messages.length - 1
+            const wasCopied = copiedId === msg.id
 
             return (
               <View key={msg.id} style={[styles.msgRow, isAdvocate ? styles.advocateRow : styles.userRow]}>
@@ -244,13 +256,38 @@ export default function ChatScreen() {
                     <MaterialIcons name="shield" size={18} color={Colors.primaryText} />
                   </View>
                 )}
-                <View style={[styles.bubble, isAdvocate ? styles.advocateBubble : styles.userBubble]}>
-                  <Text style={[styles.bubbleText, isAdvocate ? styles.advocateText : styles.userText]}>
-                    {msg.content}
-                  </Text>
-                  <Text style={[styles.timestamp, isAdvocate ? styles.timestampLeft : styles.timestampRight]}>
-                    {new Date(msg.createdAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
-                  </Text>
+                <View style={styles.bubbleCol}>
+                  <TouchableOpacity
+                    activeOpacity={0.85}
+                    onLongPress={() => copyMessage(msg)}
+                    delayLongPress={400}
+                    style={[styles.bubble, isAdvocate ? styles.advocateBubble : styles.userBubble]}
+                  >
+                    <Text selectable style={[styles.bubbleText, isAdvocate ? styles.advocateText : styles.userText]}>
+                      {msg.content}
+                    </Text>
+                    <Text style={[styles.timestamp, isAdvocate ? styles.timestampLeft : styles.timestampRight]}>
+                      {wasCopied ? 'Copied!' : new Date(msg.createdAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
+                    </Text>
+                  </TouchableOpacity>
+
+                  {/* Copy button below advocate messages */}
+                  {isAdvocate && (
+                    <TouchableOpacity
+                      style={styles.copyBtn}
+                      onPress={() => copyMessage(msg)}
+                      accessibilityLabel="Copy message"
+                    >
+                      <MaterialIcons
+                        name={wasCopied ? 'check' : 'content-copy'}
+                        size={14}
+                        color={wasCopied ? Colors.success : Colors.textMuted}
+                      />
+                      <Text style={[styles.copyBtnText, wasCopied && styles.copyBtnTextDone]}>
+                        {wasCopied ? 'Copied' : 'Copy'}
+                      </Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
 
                 {/* Quick starters after opener */}
@@ -306,6 +343,12 @@ export default function ChatScreen() {
           )}
 
         </ScrollView>
+
+        {/* Disclaimer */}
+        <View style={styles.disclaimer}>
+          <MaterialIcons name="info-outline" size={11} color={Colors.textMuted} />
+          <Text style={styles.disclaimerText}>AI responses are not legal or medical advice.</Text>
+        </View>
 
         {/* Input bar */}
         <View style={styles.inputBar}>
@@ -373,7 +416,7 @@ const styles = StyleSheet.create({
 
   msgRow: { gap: 8 },
   advocateRow: { flexDirection: 'row', alignItems: 'flex-end', gap: Spacing.sm },
-  userRow: { flexDirection: 'row', justifyContent: 'flex-end' },
+  userRow: { flexDirection: 'row', justifyContent: 'flex-end', alignItems: 'flex-end' },
 
   avatar: {
     width: 36, height: 36, borderRadius: 18,
@@ -382,8 +425,14 @@ const styles = StyleSheet.create({
     flexShrink: 0, alignSelf: 'flex-end',
   },
 
+  bubbleCol: {
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    maxWidth: '82%',
+    gap: 4,
+  },
   bubble: {
-    maxWidth: '82%', borderRadius: Radius.lg, padding: Spacing.md,
+    borderRadius: Radius.lg, padding: Spacing.md,
     gap: 4,
   },
   advocateBubble: {
@@ -413,6 +462,16 @@ const styles = StyleSheet.create({
   dot2: { opacity: 0.65 },
   dot3: { opacity: 0.35 },
 
+  copyBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 2,
+    paddingHorizontal: 4,
+  },
+  copyBtnText: { fontSize: FontSize.xs, color: Colors.textMuted },
+  copyBtnTextDone: { color: Colors.success },
+
   startersWrap: {
     flexWrap: 'wrap', flexDirection: 'row', gap: 8,
     marginTop: 4, marginLeft: 44, // align under the bubble (36 avatar + 8 gap)
@@ -435,6 +494,18 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.surfaceAlt,
   },
   actionChipText: { fontSize: FontSize.xs, color: Colors.primary, fontWeight: '600' },
+
+  disclaimer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    paddingVertical: 4,
+    backgroundColor: Colors.background,
+    borderTopWidth: 1,
+    borderTopColor: Colors.border,
+  },
+  disclaimerText: { fontSize: 10, color: Colors.textMuted },
 
   inputBar: {
     flexDirection: 'row', alignItems: 'flex-end', gap: Spacing.sm,
