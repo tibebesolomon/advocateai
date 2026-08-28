@@ -1,0 +1,1094 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AdvocateAI — Your Private Legal & Medical Document Advocate</title>
+  <meta name="description" content="AdvocateAI is a fully offline, privacy-first app that helps low-income users understand and fight back against confusing legal and medical documents. No cloud. No data sharing. Ever." />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:       #080F1A;
+      --surface:  #0D1B2D;
+      --surfaceAlt:#111E30;
+      --border:   #1E2E45;
+      --primary:  #2563EB;
+      --primary2: #3B82F6;
+      --accent:   #10B981;
+      --danger:   #EF4444;
+      --warning:  #F59E0B;
+      --text:     #F1F5F9;
+      --textSub:  #94A3B8;
+      --textMut:  #475569;
+      --radius:   12px;
+      --gap:      2rem;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      line-height: 1.6;
+      overflow-x: hidden;
+    }
+
+    /* ── Nav ─────────────────────────────────────────────────────────────────── */
+    nav {
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      z-index: 100;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 1rem 2rem;
+      background: rgba(8,15,26,0.85);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .nav-logo {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      font-size: 1.15rem;
+      font-weight: 800;
+      text-decoration: none;
+      color: var(--text);
+    }
+
+    .nav-logo .shield {
+      width: 32px; height: 32px;
+      background: var(--primary);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1rem;
+    }
+
+    .nav-links { display: flex; gap: 1.5rem; align-items: center; }
+    .nav-links a {
+      color: var(--textSub);
+      text-decoration: none;
+      font-size: 0.9rem;
+      transition: color .2s;
+    }
+    .nav-links a:hover { color: var(--text); }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.6rem 1.4rem;
+      border-radius: var(--radius);
+      font-size: 0.9rem;
+      font-weight: 700;
+      text-decoration: none;
+      cursor: pointer;
+      border: none;
+      transition: opacity .2s, transform .1s;
+    }
+    .btn:active { transform: scale(0.97); }
+    .btn-primary { background: var(--primary); color: #fff; }
+    .btn-primary:hover { opacity: 0.88; }
+    .btn-ghost { background: transparent; color: var(--text); border: 1px solid var(--border); }
+    .btn-ghost:hover { border-color: var(--primary2); color: var(--primary2); }
+    .btn-lg { padding: 0.9rem 2.2rem; font-size: 1rem; border-radius: 14px; }
+
+    /* ── Hero ────────────────────────────────────────────────────────────────── */
+    .hero {
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      padding: 8rem 1.5rem 5rem;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .hero::before {
+      content: '';
+      position: absolute;
+      top: -200px; left: 50%;
+      transform: translateX(-50%);
+      width: 900px; height: 900px;
+      background: radial-gradient(circle, rgba(37,99,235,0.18) 0%, transparent 70%);
+      pointer-events: none;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      background: rgba(37,99,235,0.15);
+      border: 1px solid rgba(37,99,235,0.4);
+      color: var(--primary2);
+      padding: 0.35rem 1rem;
+      border-radius: 999px;
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+      margin-bottom: 1.5rem;
+    }
+
+    .badge .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+
+    .hero h1 {
+      font-size: clamp(2.4rem, 6vw, 4.2rem);
+      font-weight: 900;
+      line-height: 1.1;
+      max-width: 820px;
+      letter-spacing: -0.02em;
+      margin-bottom: 1.4rem;
+    }
+
+    .hero h1 span { color: var(--primary2); }
+
+    .hero p {
+      font-size: clamp(1rem, 2.5vw, 1.2rem);
+      color: var(--textSub);
+      max-width: 560px;
+      margin-bottom: 2.5rem;
+      line-height: 1.7;
+    }
+
+    .hero-cta { display: flex; gap: 1rem; flex-wrap: wrap; justify-content: center; }
+
+    .privacy-note {
+      margin-top: 1.5rem;
+      font-size: 0.8rem;
+      color: var(--textMut);
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+
+    .privacy-note .lock { color: var(--accent); font-size: 0.9rem; }
+
+    /* ── Phone mockup ─────────────────────────────────────────────────────────── */
+    .mockup-wrap {
+      margin-top: 4rem;
+      position: relative;
+    }
+
+    .phone {
+      width: 280px;
+      height: 560px;
+      border-radius: 40px;
+      background: var(--surface);
+      border: 2px solid var(--border);
+      overflow: hidden;
+      box-shadow: 0 60px 120px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.05);
+      position: relative;
+    }
+
+    .phone::before {
+      content: '';
+      position: absolute;
+      top: 12px; left: 50%;
+      transform: translateX(-50%);
+      width: 80px; height: 6px;
+      border-radius: 3px;
+      background: var(--border);
+      z-index: 5;
+    }
+
+    .phone-screen {
+      padding: 40px 18px 18px;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .screen-header {
+      font-size: 11px;
+      font-weight: 800;
+      color: var(--primary2);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .screen-title {
+      font-size: 15px;
+      font-weight: 800;
+      color: var(--text);
+    }
+
+    .screen-chip {
+      display: inline-block;
+      background: rgba(239,68,68,0.15);
+      border: 1px solid rgba(239,68,68,0.4);
+      color: #FCA5A5;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 2px 8px;
+      border-radius: 6px;
+    }
+
+    .screen-chip.yellow {
+      background: rgba(245,158,11,0.15);
+      border-color: rgba(245,158,11,0.4);
+      color: #FCD34D;
+    }
+
+    .screen-card {
+      background: var(--surfaceAlt);
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      padding: 10px 12px;
+    }
+
+    .screen-card-label {
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--textMut);
+      margin-bottom: 4px;
+    }
+
+    .screen-card-value {
+      font-size: 12px;
+      color: var(--text);
+      line-height: 1.4;
+    }
+
+    .screen-card-value.danger { color: #FCA5A5; }
+    .screen-card-value.accent { color: #6EE7B7; }
+
+    .screen-btn {
+      background: var(--primary);
+      border-radius: 10px;
+      padding: 10px;
+      text-align: center;
+      font-size: 11px;
+      font-weight: 800;
+      color: #fff;
+    }
+
+    .screen-lock-badge {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(16,185,129,0.1);
+      border: 1px solid rgba(16,185,129,0.3);
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-size: 9px;
+      color: #6EE7B7;
+      font-weight: 700;
+    }
+
+    /* ── Section ─────────────────────────────────────────────────────────────── */
+    section {
+      padding: 5rem 1.5rem;
+    }
+
+    .container {
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+
+    .section-label {
+      font-size: 0.75rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--primary2);
+      margin-bottom: 0.8rem;
+    }
+
+    .section-title {
+      font-size: clamp(1.8rem, 4vw, 2.8rem);
+      font-weight: 900;
+      line-height: 1.15;
+      letter-spacing: -0.02em;
+      margin-bottom: 1rem;
+    }
+
+    .section-sub {
+      font-size: 1.05rem;
+      color: var(--textSub);
+      max-width: 560px;
+      line-height: 1.7;
+    }
+
+    /* ── Stats bar ───────────────────────────────────────────────────────────── */
+    .stats-bar {
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+      padding: 2rem 1.5rem;
+    }
+
+    .stats-grid {
+      max-width: 1100px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 2rem;
+      text-align: center;
+    }
+
+    .stat-num {
+      font-size: 2.4rem;
+      font-weight: 900;
+      color: var(--primary2);
+      letter-spacing: -0.02em;
+    }
+
+    .stat-label {
+      font-size: 0.85rem;
+      color: var(--textSub);
+      margin-top: 0.2rem;
+    }
+
+    /* ── Features grid ───────────────────────────────────────────────────────── */
+    .features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      gap: 1.5rem;
+      margin-top: 3rem;
+    }
+
+    .feature-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 1.75rem;
+      transition: border-color .25s, transform .2s;
+    }
+
+    .feature-card:hover {
+      border-color: var(--primary);
+      transform: translateY(-3px);
+    }
+
+    .feature-icon {
+      width: 48px; height: 48px;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.4rem;
+      margin-bottom: 1rem;
+    }
+
+    .feature-card h3 {
+      font-size: 1.05rem;
+      font-weight: 800;
+      margin-bottom: 0.5rem;
+    }
+
+    .feature-card p {
+      font-size: 0.9rem;
+      color: var(--textSub);
+      line-height: 1.65;
+    }
+
+    /* ── Privacy section ─────────────────────────────────────────────────────── */
+    .privacy-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 3rem;
+      align-items: center;
+      margin-top: 3rem;
+    }
+
+    .privacy-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .privacy-list li {
+      display: flex;
+      gap: 0.8rem;
+      align-items: flex-start;
+    }
+
+    .privacy-list .check {
+      width: 22px; height: 22px;
+      min-width: 22px;
+      border-radius: 50%;
+      background: rgba(16,185,129,0.15);
+      border: 1px solid rgba(16,185,129,0.4);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.75rem;
+      color: var(--accent);
+      margin-top: 2px;
+    }
+
+    .privacy-list .cross {
+      width: 22px; height: 22px;
+      min-width: 22px;
+      border-radius: 50%;
+      background: rgba(239,68,68,0.1);
+      border: 1px solid rgba(239,68,68,0.3);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.75rem;
+      color: #FCA5A5;
+      margin-top: 2px;
+    }
+
+    .privacy-list .item-title {
+      font-weight: 700;
+      font-size: 0.95rem;
+      margin-bottom: 0.15rem;
+    }
+
+    .privacy-list .item-desc {
+      font-size: 0.85rem;
+      color: var(--textSub);
+    }
+
+    .privacy-visual {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 2rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .shield-big {
+      width: 72px; height: 72px;
+      border-radius: 18px;
+      background: rgba(37,99,235,0.15);
+      border: 1px solid rgba(37,99,235,0.3);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 2rem;
+      margin-bottom: 0.5rem;
+    }
+
+    .pv-title {
+      font-size: 1.2rem;
+      font-weight: 800;
+    }
+
+    .pv-sub {
+      font-size: 0.85rem;
+      color: var(--textSub);
+    }
+
+    .pill-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5rem;
+      margin-top: 0.5rem;
+    }
+
+    .pill {
+      background: var(--surfaceAlt);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 0.3rem 0.8rem;
+      font-size: 0.78rem;
+      color: var(--textSub);
+      font-weight: 600;
+    }
+
+    .pill.green {
+      background: rgba(16,185,129,0.1);
+      border-color: rgba(16,185,129,0.3);
+      color: #6EE7B7;
+    }
+
+    /* ── How it works ─────────────────────────────────────────────────────────── */
+    .steps {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 2rem;
+      margin-top: 3rem;
+      position: relative;
+    }
+
+    .step {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+    }
+
+    .step-num {
+      width: 40px; height: 40px;
+      border-radius: 10px;
+      background: rgba(37,99,235,0.15);
+      border: 1px solid rgba(37,99,235,0.3);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 900;
+      font-size: 1rem;
+      color: var(--primary2);
+      margin-bottom: 1rem;
+    }
+
+    .step h3 {
+      font-size: 1rem;
+      font-weight: 800;
+      margin-bottom: 0.4rem;
+    }
+
+    .step p {
+      font-size: 0.88rem;
+      color: var(--textSub);
+      line-height: 1.6;
+    }
+
+    /* ── Document types ───────────────────────────────────────────────────────── */
+    .doc-types {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      margin-top: 2rem;
+    }
+
+    .doc-type-pill {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0.6rem 1rem;
+      font-size: 0.88rem;
+      color: var(--textSub);
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .doc-type-pill .icon {
+      font-size: 1rem;
+    }
+
+    /* ── Anomaly section ──────────────────────────────────────────────────────── */
+    .anomaly-cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1rem;
+      margin-top: 2.5rem;
+    }
+
+    .anomaly-card {
+      background: var(--surface);
+      border-radius: 14px;
+      padding: 1.25rem 1.5rem;
+      border-left: 3px solid;
+      border-top: 1px solid var(--border);
+      border-right: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .anomaly-card.red { border-left-color: var(--danger); }
+    .anomaly-card.yellow { border-left-color: var(--warning); }
+
+    .anomaly-type {
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      font-weight: 700;
+      margin-bottom: 0.4rem;
+    }
+
+    .anomaly-card.red .anomaly-type { color: #FCA5A5; }
+    .anomaly-card.yellow .anomaly-type { color: #FCD34D; }
+
+    .anomaly-desc {
+      font-size: 0.9rem;
+      color: var(--text);
+      font-weight: 600;
+      margin-bottom: 0.3rem;
+    }
+
+    .anomaly-detail {
+      font-size: 0.82rem;
+      color: var(--textSub);
+    }
+
+    /* ── CTA section ─────────────────────────────────────────────────────────── */
+    .cta-section {
+      text-align: center;
+      padding: 6rem 1.5rem;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .cta-section::before {
+      content: '';
+      position: absolute;
+      bottom: -200px; left: 50%;
+      transform: translateX(-50%);
+      width: 700px; height: 700px;
+      background: radial-gradient(circle, rgba(37,99,235,0.12) 0%, transparent 70%);
+      pointer-events: none;
+    }
+
+    .cta-section h2 {
+      font-size: clamp(1.8rem, 4vw, 3rem);
+      font-weight: 900;
+      line-height: 1.15;
+      letter-spacing: -0.02em;
+      max-width: 680px;
+      margin: 0 auto 1.5rem;
+    }
+
+    .cta-section p {
+      color: var(--textSub);
+      max-width: 480px;
+      margin: 0 auto 2.5rem;
+    }
+
+    .platforms {
+      display: flex;
+      justify-content: center;
+      gap: 1rem;
+      margin-top: 2rem;
+      flex-wrap: wrap;
+    }
+
+    .platform-btn {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 0.85rem 1.5rem;
+      text-decoration: none;
+      color: var(--text);
+      font-weight: 700;
+      font-size: 0.95rem;
+      transition: border-color .2s, transform .15s;
+    }
+
+    .platform-btn:hover {
+      border-color: var(--primary2);
+      transform: translateY(-2px);
+    }
+
+    .platform-btn .platform-icon { font-size: 1.4rem; }
+
+    /* ── Footer ──────────────────────────────────────────────────────────────── */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 2.5rem 1.5rem;
+      text-align: center;
+    }
+
+    .footer-inner {
+      max-width: 1100px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 1rem;
+    }
+
+    .footer-links {
+      display: flex;
+      gap: 1.5rem;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    .footer-links a {
+      color: var(--textMut);
+      text-decoration: none;
+      font-size: 0.85rem;
+      transition: color .2s;
+    }
+
+    .footer-links a:hover { color: var(--textSub); }
+
+    .footer-copy {
+      font-size: 0.8rem;
+      color: var(--textMut);
+    }
+
+    /* ── Responsive ──────────────────────────────────────────────────────────── */
+    @media (max-width: 768px) {
+      nav { padding: 0.75rem 1rem; }
+      .nav-links { display: none; }
+      .privacy-grid { grid-template-columns: 1fr; }
+      .privacy-visual { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── Navigation ──────────────────────────────────────────────────────────── -->
+<nav>
+  <a href="#" class="nav-logo">
+    <div class="shield">⚖️</div>
+    AdvocateAI
+  </a>
+  <div class="nav-links">
+    <a href="#features">Features</a>
+    <a href="#privacy">Privacy</a>
+    <a href="#how-it-works">How It Works</a>
+    <a href="#anomalies">Anomaly Detector</a>
+    <a href="#download" class="btn btn-primary">Download</a>
+  </div>
+</nav>
+
+<!-- ── Hero ────────────────────────────────────────────────────────────────── -->
+<section class="hero">
+  <div class="badge">
+    <span class="dot"></span>
+    100% On-Device · Zero Cloud · Open Source
+  </div>
+
+  <h1>Your AI lawyer in your pocket.<br><span>Fully private. Fully offline.</span></h1>
+
+  <p>
+    AdvocateAI reads, explains, and fights back against confusing medical bills, eviction notices, insurance denials, and legal documents — all on your device. No data ever leaves your phone.
+  </p>
+
+  <div class="hero-cta">
+    <a href="#download" class="btn btn-primary btn-lg">📱 Get the App</a>
+    <a href="#how-it-works" class="btn btn-ghost btn-lg">See How It Works</a>
+  </div>
+
+  <div class="privacy-note">
+    <span class="lock">🔒</span>
+    AES-256-GCM encrypted · On-device AI · No accounts required
+  </div>
+
+  <div class="mockup-wrap">
+    <div class="phone">
+      <div class="phone-screen">
+        <div class="screen-header">AdvocateAI · Analysis</div>
+        <div class="screen-title">Medical Bill — $4,320</div>
+        <span class="screen-chip">HIGH RISK</span>
+
+        <div class="screen-card" style="margin-top:6px">
+          <div class="screen-card-label">AI Summary</div>
+          <div class="screen-card-value">This bill charges for 3 duplicate lab tests. You likely owe $1,200 less.</div>
+        </div>
+
+        <div class="screen-card">
+          <div class="screen-card-label">Anomaly Detected</div>
+          <div class="screen-card-value danger">⚠ DUPLICATE CHARGE — Line 7, 8, 9 identical ($840 each)</div>
+        </div>
+
+        <div class="screen-card">
+          <div class="screen-card-label">Your Rights</div>
+          <div class="screen-card-value accent">You have 180 days to dispute under the No Surprises Act.</div>
+        </div>
+
+        <div class="screen-lock-badge">
+          <span>🔒</span> All processing on-device · Never uploaded
+        </div>
+
+        <div class="screen-btn">Generate Dispute Letter →</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Stats ────────────────────────────────────────────────────────────────── -->
+<div class="stats-bar">
+  <div class="stats-grid">
+    <div>
+      <div class="stat-num">0</div>
+      <div class="stat-label">Bytes sent to any server</div>
+    </div>
+    <div>
+      <div class="stat-num">8+</div>
+      <div class="stat-label">Document types supported</div>
+    </div>
+    <div>
+      <div class="stat-num">6</div>
+      <div class="stat-label">Anomaly types detected</div>
+    </div>
+    <div>
+      <div class="stat-num">AES-256</div>
+      <div class="stat-label">Encryption standard</div>
+    </div>
+  </div>
+</div>
+
+<!-- ── Features ─────────────────────────────────────────────────────────────── -->
+<section id="features">
+  <div class="container">
+    <div class="section-label">Core Capabilities</div>
+    <h2 class="section-title">Everything you need.<br>Nothing it shouldn't have.</h2>
+    <p class="section-sub">Four integrated engines — capture, reason, act, protect — all running completely offline on your device.</p>
+
+    <div class="features-grid">
+      <div class="feature-card">
+        <div class="feature-icon" style="background:rgba(37,99,235,0.15)">📸</div>
+        <h3>Smart Document Scanner</h3>
+        <p>Three-pass adaptive OCR with table extraction. Automatically crops, enhances resolution, and preserves document layout — including complex medical billing tables and legal clauses.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon" style="background:rgba(16,185,129,0.15)">🧠</div>
+        <h3>On-Device AI Analysis</h3>
+        <p>Local LLM (Qwen 2.5 / Llama 3.2) explains every document in plain English. No API calls, no internet connection required. Your documents never leave your phone.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon" style="background:rgba(239,68,68,0.15)">🔍</div>
+        <h3>Anomaly & Overcharge Detector</h3>
+        <p>A dedicated second AI pass scans for overcharges, duplicate billing, unauthorized fees, illegal terms, missing disclosures, and medical unbundling — then flags each with evidence.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon" style="background:rgba(245,158,11,0.15)">✍️</div>
+        <h3>Dispute Letter Generator</h3>
+        <p>Generates legally-grounded dispute letters, appeal letters, call scripts, and form completions — all tailored to your specific document, institution, and jurisdiction.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon" style="background:rgba(139,92,246,0.15)">⏰</div>
+        <h3>Deadline Alert System</h3>
+        <p>Calculates statutory deadline windows per document type — 30-day notice rules, 180-day dispute windows, appeal periods — and schedules local notifications at 7, 3, and 1 day out.</p>
+      </div>
+
+      <div class="feature-card">
+        <div class="feature-icon" style="background:rgba(37,99,235,0.12)">🗂️</div>
+        <h3>Encrypted Case Bundle</h3>
+        <p>Export a complete case package — analysis, anomaly flags, letters, correspondence thread — as a single secure PDF you can share with a lawyer or keep for your records.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Document Types ─────────────────────────────────────────────────────── -->
+<section style="padding-top:0">
+  <div class="container">
+    <div class="section-label">Supported Documents</div>
+    <h2 class="section-title">Works with the documents<br>that matter most</h2>
+    <div class="doc-types">
+      <div class="doc-type-pill"><span class="icon">🏥</span> Medical Bills</div>
+      <div class="doc-type-pill"><span class="icon">🚫</span> Insurance Denials</div>
+      <div class="doc-type-pill"><span class="icon">🏠</span> Eviction Notices</div>
+      <div class="doc-type-pill"><span class="icon">📋</span> Housing Notices</div>
+      <div class="doc-type-pill"><span class="icon">⚖️</span> Legal Notices</div>
+      <div class="doc-type-pill"><span class="icon">📝</span> Benefits/Welfare Forms</div>
+      <div class="doc-type-pill"><span class="icon">💡</span> Utility Bills</div>
+      <div class="doc-type-pill"><span class="icon">📄</span> General Documents</div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Privacy ──────────────────────────────────────────────────────────────── -->
+<section id="privacy" style="background:rgba(13,27,45,0.5)">
+  <div class="container">
+    <div class="section-label">Privacy Architecture</div>
+    <h2 class="section-title">Privacy isn't a feature.<br>It's the foundation.</h2>
+
+    <div class="privacy-grid">
+      <ul class="privacy-list">
+        <li>
+          <span class="check">✓</span>
+          <div>
+            <div class="item-title">All AI runs on your device</div>
+            <div class="item-desc">LLM inference via llama.rn — no API calls, no cloud model, no OpenAI, nothing.</div>
+          </div>
+        </li>
+        <li>
+          <span class="check">✓</span>
+          <div>
+            <div class="item-title">OCR stays on-device</div>
+            <div class="item-desc">Google ML Kit Text Recognition v2 — on-device only, never Google Cloud Vision.</div>
+          </div>
+        </li>
+        <li>
+          <span class="check">✓</span>
+          <div>
+            <div class="item-title">AES-256-GCM encrypted storage</div>
+            <div class="item-desc">Every document, letter, chat message, and thread is encrypted with a per-device random key.</div>
+          </div>
+        </li>
+        <li>
+          <span class="check">✓</span>
+          <div>
+            <div class="item-title">Voice transcription on-device</div>
+            <div class="item-desc">Whisper.rn processes your voice locally. Your audio never leaves your device.</div>
+          </div>
+        </li>
+        <li>
+          <span class="check">✓</span>
+          <div>
+            <div class="item-title">No account required</div>
+            <div class="item-desc">No sign-up, no email, no phone number. Just install and use.</div>
+          </div>
+        </li>
+        <li>
+          <span class="cross">✕</span>
+          <div>
+            <div class="item-title">No telemetry or analytics</div>
+            <div class="item-desc">We collect zero usage data, crash reports, or behavioral analytics.</div>
+          </div>
+        </li>
+        <li>
+          <span class="cross">✕</span>
+          <div>
+            <div class="item-title">No cloud backup of your documents</div>
+            <div class="item-desc">Android cloud backup is disabled. Your case files never sync to Google Drive or iCloud.</div>
+          </div>
+        </li>
+      </ul>
+
+      <div class="privacy-visual">
+        <div class="shield-big">🛡️</div>
+        <div class="pv-title">Zero-Knowledge Architecture</div>
+        <div class="pv-sub">We designed AdvocateAI so that even if someone compromised our servers — there's nothing there. Your data never reaches us.</div>
+        <div class="pill-row">
+          <span class="pill green">On-device LLM</span>
+          <span class="pill green">On-device OCR</span>
+          <span class="pill green">On-device STT</span>
+          <span class="pill green">AES-256-GCM</span>
+          <span class="pill">No accounts</span>
+          <span class="pill">No analytics</span>
+          <span class="pill">No network for docs</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── How It Works ──────────────────────────────────────────────────────────── -->
+<section id="how-it-works">
+  <div class="container">
+    <div class="section-label">Getting Started</div>
+    <h2 class="section-title">Four steps from scan to action</h2>
+    <p class="section-sub">No account, no setup beyond downloading the AI model. Take a photo and let AdvocateAI do the rest.</p>
+
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <h3>Scan Your Document</h3>
+        <p>Take a photo with the in-app camera or import an existing image. Three-pass OCR extracts text and tables with high accuracy — even for low-quality photos.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <h3>AI Analyzes Instantly</h3>
+        <p>The on-device AI reads the document, explains it in plain English, identifies your rights, flags deadlines, and runs a second pass for overcharges and anomalies.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <h3>Generate Your Response</h3>
+        <p>With one tap, generate a dispute letter, appeal, call script, or form — tailored to your document and jurisdiction. Edit freely, then export as PDF.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">4</div>
+        <h3>Track & Export</h3>
+        <p>Set deadline reminders, track the correspondence thread with the institution, and export a complete case bundle whenever you need to share with a lawyer.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── Anomaly Detector ───────────────────────────────────────────────────── -->
+<section id="anomalies" style="background:rgba(13,27,45,0.5)">
+  <div class="container">
+    <div class="section-label">Anomaly Detector</div>
+    <h2 class="section-title">Catches what humans miss</h2>
+    <p class="section-sub">A dedicated second AI inference pass scans every line item, clause, and disclosure for six classes of financial and legal violations.</p>
+
+    <div class="anomaly-cards">
+      <div class="anomaly-card red">
+        <div class="anomaly-type">Overcharge</div>
+        <div class="anomaly-desc">Charge exceeds allowed amount</div>
+        <div class="anomaly-detail">Insurance-contracted rates, Medicare/Medicaid limits, or price-listed procedures billed above allowed amounts.</div>
+      </div>
+      <div class="anomaly-card red">
+        <div class="anomaly-type">Duplicate Charge</div>
+        <div class="anomaly-desc">Same service billed twice</div>
+        <div class="anomaly-detail">Identical CPT codes, lab tests, or service descriptions appearing multiple times on the same bill.</div>
+      </div>
+      <div class="anomaly-card yellow">
+        <div class="anomaly-type">Unauthorized Fee</div>
+        <div class="anomaly-desc">Fee not in your agreement</div>
+        <div class="anomaly-detail">Administrative fees, facility charges, or surcharges not disclosed in your lease, insurance plan, or service contract.</div>
+      </div>
+      <div class="anomaly-card red">
+        <div class="anomaly-type">Illegal Term</div>
+        <div class="anomaly-desc">Clause violates consumer law</div>
+        <div class="anomaly-detail">Waiver-of-rights clauses, unlawful eviction terms, FDCPA violations, or clauses prohibited by state tenant law.</div>
+      </div>
+      <div class="anomaly-card yellow">
+        <div class="anomaly-type">Missing Disclosure</div>
+        <div class="anomaly-desc">Required notice not provided</div>
+        <div class="anomaly-detail">HIPAA rights notice, No Surprises Act cost estimates, RESPA disclosures, or state-mandated eviction warnings absent from the document.</div>
+      </div>
+      <div class="anomaly-card red">
+        <div class="anomaly-type">Unbundling</div>
+        <div class="anomaly-desc">Services split to inflate billing</div>
+        <div class="anomaly-detail">Medical procedures billed as multiple separate line items (unbundling) to circumvent global billing rules and increase total charges.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ── CTA ──────────────────────────────────────────────────────────────────── -->
+<section id="download" class="cta-section">
+  <div class="container">
+    <div class="badge" style="margin:0 auto 1.5rem">
+      <span class="dot"></span>
+      Free · Open Source · No Ads
+    </div>
+    <h2>Stand up for yourself.<br>Start with AdvocateAI.</h2>
+    <p>Join thousands of people who've already used AdvocateAI to dispute unfair bills, understand their rights, and fight back — privately and effectively.</p>
+
+    <div style="display:flex;gap:1rem;justify-content:center;flex-wrap:wrap">
+      <a href="#" class="btn btn-primary btn-lg">📱 Download Free</a>
+      <a href="https://github.com" class="btn btn-ghost btn-lg" target="_blank" rel="noopener">⭐ View on GitHub</a>
+    </div>
+
+    <div class="platforms">
+      <a href="#" class="platform-btn">
+        <span class="platform-icon">🤖</span>
+        Android APK
+      </a>
+      <a href="#" class="platform-btn">
+        <span class="platform-icon">🍎</span>
+        iOS (TestFlight)
+      </a>
+    </div>
+
+    <div class="privacy-note" style="justify-content:center;margin-top:1.5rem">
+      <span class="lock">🔒</span>
+      No account. No email. No tracking. Just install and use.
+    </div>
+  </div>
+</section>
+
+<!-- ── Footer ───────────────────────────────────────────────────────────────── -->
+<footer>
+  <div class="footer-inner">
+    <a href="#" class="nav-logo" style="font-size:1rem">
+      <div class="shield" style="width:26px;height:26px;font-size:0.8rem">⚖️</div>
+      AdvocateAI
+    </a>
+    <div class="footer-links">
+      <a href="#features">Features</a>
+      <a href="#privacy">Privacy</a>
+      <a href="#how-it-works">How It Works</a>
+      <a href="https://github.com/tibebesolomon/advocateai" target="_blank" rel="noopener">GitHub</a>
+      <a href="privacy.html">Privacy Policy</a>
+      <a href="terms.html">Terms of Service</a>
+    </div>
+    <div class="footer-copy">
+      © 2026 AdvocateAI. Built for the people who need it most. MIT Licensed.
+    </div>
+  </div>
+</footer>
+
+</body>
+</html>
