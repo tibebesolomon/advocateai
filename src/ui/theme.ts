@@ -1,5 +1,8 @@
 // High-contrast, WCAG AA-compliant theme for low-vision and elderly users.
 // All color pairs maintain ≥4.5:1 contrast ratio.
+// FontSize and Spacing are device-scaled via responsive.ts.
+import { rf, rs } from './responsive'
+export { isTablet, isSmallPhone, screenW, screenH } from './responsive'
 
 export const Colors = {
   // Backgrounds
@@ -37,36 +40,36 @@ export const Colors = {
 } as const
 
 export const Spacing = {
-  xs: 4,
-  sm: 8,
-  md: 16,
-  lg: 24,
-  xl: 32,
-  xxl: 48,
+  xs: rs(4),
+  sm: rs(8),
+  md: rs(16),
+  lg: rs(24),
+  xl: rs(32),
+  xxl: rs(48),
 } as const
 
 // Accessible minimum touch target: 48×48dp (WCAG 2.5.5)
 export const TouchTarget = {
-  min: 48,
-  comfortable: 56,
-  large: 72,
+  min: rs(48),
+  comfortable: rs(56),
+  large: rs(72),
 } as const
 
 export const FontSize = {
-  xs: 11,
-  sm: 13,
-  md: 16,
-  lg: 19,
-  xl: 24,
-  xxl: 32,
-  hero: 42,
+  xs: rf(11),
+  sm: rf(13),
+  md: rf(16),
+  lg: rf(19),
+  xl: rf(24),
+  xxl: rf(32),
+  hero: rf(42),
 } as const
 
 export const Radius = {
-  sm: 6,
-  md: 12,
-  lg: 18,
-  xl: 24,
+  sm: rs(6),
+  md: rs(12),
+  lg: rs(18),
+  xl: rs(24),
   round: 999,
 } as const
 

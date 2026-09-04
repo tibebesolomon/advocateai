@@ -1,37 +1,49 @@
 {
   "cli": {
-    "version": ">= 10.0.0"
+    "version": ">= 10.0.0",
+    "appVersionSource": "remote"
   },
   "build": {
     "development": {
       "developmentClient": true,
       "distribution": "internal",
+      "android": {
+        "buildType": "apk",
+        "gradleCommand": ":app:assembleDebug"
+      },
       "ios": {
         "simulator": true
       }
     },
     "preview": {
       "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      },
       "ios": {
         "simulator": false
       }
     },
     "production": {
       "autoIncrement": true,
-      "ios": {
-        "buildConfiguration": "Release"
-      },
       "android": {
         "buildType": "app-bundle"
+      },
+      "ios": {
+        "buildConfiguration": "Release"
       }
     }
   },
   "submit": {
     "production": {
+      "android": {
+        "serviceAccountKeyPath": "./google-services-key.json",
+        "track": "internal"
+      },
       "ios": {
         "appleId": "itsc.tibebe.solomon@gmail.com",
-        "ascAppId": "your-app-store-connect-app-id",
-        "appleTeamId": "YOUR_TEAM_ID"
+        "ascAppId": "FILL_IN_APP_STORE_CONNECT_APP_ID",
+        "appleTeamId": "FILL_IN_APPLE_TEAM_ID"
       }
     }
   }

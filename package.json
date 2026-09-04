@@ -15,6 +15,7 @@
     "@expo/vector-icons": "^15.0.3",
     "@noble/ciphers": "^2.3.0",
     "@noble/hashes": "^2.3.0",
+    "@notifee/react-native": "^9.1.8",
     "@pdf-lib/fontkit": "^1.1.1",
     "@react-native-ml-kit/text-recognition": "^1.0.0",
     "@shopify/react-native-skia": "^2.11.1",
@@ -34,7 +35,6 @@
     "expo-image-picker": "~17.0.11",
     "expo-linking": "~8.0.12",
     "expo-network": "~8.0.8",
-    "expo-notifications": "~0.29.14",
     "expo-router": "~6.0.24",
     "expo-secure-store": "~15.0.8",
     "expo-sharing": "~14.0.8",
@@ -52,8 +52,7 @@
   "expo": {
     "install": {
       "exclude": [
-        "@shopify/react-native-skia",
-        "expo-notifications"
+        "@shopify/react-native-skia"
       ]
     },
     "doctor": {

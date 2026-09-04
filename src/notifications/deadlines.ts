@@ -1,4 +1,4 @@
-import * as Notifications from 'expo-notifications'
+import notifee, { AndroidImportance, AuthorizationStatus, TriggerType } from '@notifee/react-native'
 import type { ScannedDocument, DeadlineInfo, DocumentType, DeadlineType } from '../types'
 
 // Statutory response windows in days, per US law (conservative estimates).
@@ -35,6 +35,8 @@ const STATUTORY_DEADLINES: Record<
   ],
   GENERAL: [],
 }
+
+const CHANNEL_ID = 'deadlines'
 
 // ─── Deadline Calculation ─────────────────────────────────────────────────────
 
@@ -81,8 +83,15 @@ export async function scheduleDeadlineAlerts(
   docTitle: string,
   deadlines: DeadlineInfo[]
 ): Promise<string[]> {
-  const { granted } = await Notifications.requestPermissionsAsync()
-  if (!granted) return []
+  const settings = await notifee.requestPermission()
+  if (settings.authorizationStatus < AuthorizationStatus.AUTHORIZED) return []
+
+  // Android 8+ requires a channel; this is a no-op if it already exists.
+  await notifee.createChannel({
+    id: CHANNEL_ID,
+    name: 'Deadline Reminders',
+    importance: AndroidImportance.HIGH,
+  })
 
   const notifIds: string[] = []
   const now = new Date()
@@ -101,17 +110,17 @@ export async function scheduleDeadlineAlerts(
 
       if (triggerDate <= now) continue
 
-      const id = await Notifications.scheduleNotificationAsync({
-        content: {
+      const id = await notifee.createTriggerNotification(
+        {
           title: daysBefore === 1
-            ? `⏰ Deadline TOMORROW — Act Now`
-            : `⏰ ${daysBefore} Days Until Deadline`,
+            ? 'Deadline TOMORROW — Act Now'
+            : `${daysBefore} Days Until Deadline`,
           body: `${deadline.label} — ${docTitle}`,
           data: { documentId: docId, deadlineLabel: deadline.label },
-          categoryIdentifier: 'deadline',
+          android: { channelId: CHANNEL_ID, importance: AndroidImportance.HIGH },
         },
-        trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: triggerDate },
-      })
+        { type: TriggerType.TIMESTAMP, timestamp: triggerDate.getTime() }
+      )
       notifIds.push(id)
     }
 
@@ -119,15 +128,15 @@ export async function scheduleDeadlineAlerts(
     const dayOf = new Date(deadlineDate)
     dayOf.setHours(9, 0, 0, 0)
     if (dayOf > now) {
-      const id = await Notifications.scheduleNotificationAsync({
-        content: {
-          title: `🚨 DEADLINE TODAY`,
+      const id = await notifee.createTriggerNotification(
+        {
+          title: 'DEADLINE TODAY',
           body: `${deadline.label} — ${docTitle}`,
           data: { documentId: docId, deadlineLabel: deadline.label },
-          categoryIdentifier: 'deadline',
+          android: { channelId: CHANNEL_ID, importance: AndroidImportance.HIGH },
         },
-        trigger: { type: Notifications.SchedulableTriggerInputTypes.DATE, date: dayOf },
-      })
+        { type: TriggerType.TIMESTAMP, timestamp: dayOf.getTime() }
+      )
       notifIds.push(id)
     }
   }
@@ -136,20 +145,12 @@ export async function scheduleDeadlineAlerts(
 }
 
 export async function cancelAlertsForDocument(notifIds: string[]): Promise<void> {
-  await Promise.all(notifIds.map(id => Notifications.cancelScheduledNotificationAsync(id)))
+  await Promise.all(notifIds.map(id => notifee.cancelTriggerNotification(id)))
 }
 
-// Call once in the root layout to configure notification display behavior.
+// Call once in the root layout to configure foreground notification display behavior.
 export function configureNotifications(): void {
-  Notifications.setNotificationHandler({
-    handleNotification: async () => ({
-      shouldShowBanner: true,
-      shouldShowAlert: true,
-      shouldPlaySound: true,
-      shouldSetBadge: false,
-      shouldShowList: true,
-    }),
-  })
+  notifee.onForegroundEvent(() => {})  // required to suppress default handler warning
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

@@ -1,140 +1,183 @@
 import * as ImageManipulator from 'expo-image-manipulator'
+import * as FileSystem from 'expo-file-system/legacy'
+// ML Kit Text Recognition v2 — fully on-device, no network
 import TextRecognition from '@react-native-ml-kit/text-recognition'
 import { extractTables } from './tables'
 import type { OCRResult, OCRBlock, ExtractedTable } from '../types'
 
-interface ProcessOptions {
-  maxWidth?: number
+// ─── Lazy Skia import (native — falls back gracefully if unavailable) ──────────
+
+let _skia: typeof import('@shopify/react-native-skia') | null | undefined = undefined
+
+async function getSkia() {
+  if (_skia !== undefined) return _skia
+  try {
+    _skia = await import('@shopify/react-native-skia')
+  } catch {
+    _skia = null
+  }
+  return _skia
 }
 
-// ─── Public API ───────────────────────────────────────────────────────────────
+// ─── Public API ────────────────────────────────────────────────────────────────
 
 export async function processImageURI(
   imageUri: string,
-  options: ProcessOptions = {}
+  _options: { maxWidth?: number } = {}
 ): Promise<OCRResult> {
-  const maxWidth = options.maxWidth ?? 3000   // up from 2000 — modern phones capture 4000+px
+  const candidates: Array<{ result: OCRResult; score: number }> = []
 
-  // Pass 1: standard preprocessing at high resolution
-  const uri1 = await preprocessForOCR(imageUri, maxWidth)
-  const result1 = await runMLKitOCR(uri1)
-  const score1 = scoreResult(result1)
-
-  // Only exit early if Pass 1 is clearly excellent (lots of clean text)
-  const wordCount1 = result1.text.split(/\s+/).filter(Boolean).length
-  if (result1.confidence >= 0.82 && wordCount1 >= 60) {
-    return result1
-  }
-
-  // Pass 2: crop to detected text bounds + higher resolution
-  // Triggers whenever we have at least 2 blocks (not the old > 4 requirement)
-  let best = result1
-  let bestScore = score1
-
-  if (result1.blocks.length >= 2) {
+  const addCandidate = async (uri: string) => {
     try {
-      const cropped = await cropToTextBounds(imageUri, result1.blocks)
-      // Use 3500px on the cropped region — more pixels on the actual text
-      const uri2 = await preprocessForOCR(cropped, 3500)
-      const result2 = await runMLKitOCR(uri2)
-      const score2 = scoreResult(result2)
-      if (score2 > bestScore) {
-        best = result2
-        bestScore = score2
-      }
-    } catch {
-      // fall through
-    }
+      const r = await runMLKitOCR(uri)
+      candidates.push({ result: r, score: scoreResult(r) })
+    } catch { /* fall through */ }
   }
 
-  // Pass 3: full image at higher resolution for small or dense text
+  // ── Pass 1: Raw PNG at 1800px — ML Kit's sweet spot for printed text ─────────
   try {
-    const uri3 = await preprocessForOCR(imageUri, 4000)
-    const result3 = await runMLKitOCR(uri3)
-    const score3 = scoreResult(result3)
-    if (score3 > bestScore) {
-      best = result3
-      bestScore = score3
+    const raw = await ImageManipulator.manipulateAsync(
+      imageUri,
+      [{ resize: { width: 1800 } }],
+      { compress: 1, format: ImageManipulator.SaveFormat.PNG }
+    )
+    await addCandidate(raw.uri)
+    // Early exit only for clearly excellent scans — otherwise run all passes for accuracy
+    if (candidates.length > 0) {
+      const best = candidates[0]
+      const wc = best.result.text.split(/\s+/).filter(Boolean).length
+      if (best.score > 150 && wc >= 250) return best.result
     }
+  } catch { /* fall through */ }
+
+  // ── Pass 2: Skia grayscale + contrast (best for low-light / colored docs) ────
+  const skiaUri = await preprocessWithSkia(imageUri, 2000)
+  if (skiaUri) await addCandidate(skiaUri)
+
+  // ── Pass 3: Higher-res Skia (dense text, fine print) ─────────────────────────
+  if (skiaUri) {
+    const skiaUri2 = await preprocessWithSkia(imageUri, 3200)
+    if (skiaUri2) await addCandidate(skiaUri2)
+  }
+
+  // ── Pass 4: JPEG at 45% — DCT binarization (shadows / uneven lighting) ───────
+  // Low-quality JPEG's DCT quantization pushes near-white → white, ink → black.
+  try {
+    const jpeg = await ImageManipulator.manipulateAsync(
+      imageUri,
+      [{ resize: { width: 2000 } }],
+      { compress: 0.45, format: ImageManipulator.SaveFormat.JPEG }
+    )
+    await addCandidate(jpeg.uri)
+  } catch { /* fall through */ }
+
+  // ── Pass 5: JPEG at 28% — aggressive binarization for very low contrast ──────
+  try {
+    const jpeg2 = await ImageManipulator.manipulateAsync(
+      imageUri,
+      [{ resize: { width: 1600 } }],
+      { compress: 0.28, format: ImageManipulator.SaveFormat.JPEG }
+    )
+    await addCandidate(jpeg2.uri)
+  } catch { /* fall through */ }
+
+  // ── Pass 6: Ultra-high res for fine print (receipts, small-font documents) ───
+  try {
+    const hiRes = await ImageManipulator.manipulateAsync(
+      imageUri,
+      [{ resize: { width: 3600 } }],
+      { compress: 1, format: ImageManipulator.SaveFormat.PNG }
+    )
+    await addCandidate(hiRes.uri)
+  } catch { /* fall through */ }
+
+  if (candidates.length === 0) {
+    throw Object.assign(new Error('OCR_UNAVAILABLE'), { code: 'OCR_UNAVAILABLE' })
+  }
+
+  // Pick the candidate with the highest unique-word coverage, not just word count
+  return pickBestCandidate(candidates)
+}
+
+function pickBestCandidate(
+  candidates: Array<{ result: OCRResult; score: number }>
+): OCRResult {
+  // Primary: highest score
+  const byScore = candidates.reduce((best, cur) => cur.score > best.score ? cur : best)
+
+  // If the top two are within 15% of each other, prefer the one with more unique words
+  const sorted = [...candidates].sort((a, b) => b.score - a.score)
+  if (sorted.length >= 2 && sorted[0].score * 0.85 < sorted[1].score) {
+    const uniqueWords = (r: OCRResult) =>
+      new Set(r.text.toLowerCase().match(/[a-z]{3,}/g) ?? []).size
+    const top2 = sorted.slice(0, 2)
+    return top2.reduce((a, b) => uniqueWords(b.result) > uniqueWords(a.result) ? b : a).result
+  }
+
+  return byScore.result
+}
+
+// ─── Skia Preprocessing ───────────────────────────────────────────────────────
+// Converts image to grayscale + boosts contrast using Skia's ColorMatrix filter.
+// Result is a high-contrast near-binary image — ideal for ML Kit text recognition.
+
+async function preprocessWithSkia(uri: string, targetWidth: number): Promise<string | null> {
+  try {
+    const Sk = await getSkia()
+    if (!Sk) return null
+
+    // Step 1: Resize with expo-image-manipulator (fast native resize)
+    const resized = await ImageManipulator.manipulateAsync(
+      uri,
+      [{ resize: { width: targetWidth } }],
+      { compress: 1, format: ImageManipulator.SaveFormat.PNG }
+    )
+
+    // Step 2: Load into Skia
+    const skData = await Sk.Skia.Data.fromURI(resized.uri)
+    const srcImage = Sk.Skia.Image.MakeImageFromEncoded(skData)
+    if (!srcImage) return null
+
+    const w = srcImage.width()
+    const h = srcImage.height()
+
+    const surface = Sk.Skia.Surface.Make(w, h)
+    if (!surface) return null
+
+    const canvas = surface.getCanvas()
+
+    // ColorMatrix: grayscale (luminance weights) + contrast boost
+    // Applied in normalized [0,1] color space.
+    // Formula per channel: out = c * (0.299R + 0.587G + 0.114B) + bias
+    // c=1.9 pushes dark ink toward 0 and bright paper toward 1.
+    // bias=-0.45 sets the threshold: any luma below 0.237 → black, above 0.76 → white.
+    const c = 1.9
+    const bias = -0.45
+    const m: number[] = [
+      c * 0.299, c * 0.587, c * 0.114, 0, bias,
+      c * 0.299, c * 0.587, c * 0.114, 0, bias,
+      c * 0.299, c * 0.587, c * 0.114, 0, bias,
+      0,         0,         0,         1, 0,
+    ]
+
+    const colorFilter = Sk.Skia.ColorFilter.MakeMatrix(m)
+    const paint = Sk.Skia.Paint()
+    paint.setColorFilter(colorFilter)
+    canvas.drawImage(srcImage, 0, 0, paint)
+
+    // Step 3: Encode result and save to temp file
+    const snapshot = surface.makeImageSnapshot()
+    const b64 = snapshot.encodeToBase64()   // built-in base64 PNG encoding
+
+    const destPath = (FileSystem.cacheDirectory ?? '') + `ocr_skia_${Date.now()}_${targetWidth}.png`
+    await FileSystem.writeAsStringAsync(destPath, b64, {
+      encoding: FileSystem.EncodingType.Base64,
+    })
+
+    return destPath
   } catch {
-    // fall through
+    return null
   }
-
-  // Pass 4: JPEG contrast pass — only if still not great.
-  // JPEG DCT quantization pushes near-white → white and near-black → black,
-  // which improves contrast on ink-on-paper photos without extra libraries.
-  if (bestScore < scoreResult(result1) * 2) {
-    try {
-      const uri4 = await preprocessForOCRJpeg(imageUri, 3000)
-      const result4 = await runMLKitOCR(uri4)
-      const score4 = scoreResult(result4)
-      if (score4 > bestScore) best = result4
-    } catch {
-      // fall through
-    }
-  }
-
-  return best
-}
-
-// Composite score: word count weighted by confidence, penalised for junk chars
-function scoreResult(r: OCRResult): number {
-  const words = r.text.split(/\s+/).filter(Boolean).length
-  const junk = (r.text.match(/[^\w\s$.,\-:/()'"%#@!?;[\]{}\\^~`=+<>|]/g) ?? []).length
-  const junkRatio = junk / Math.max(r.text.length, 1)
-  return words * r.confidence * (1 - junkRatio * 5)
-}
-
-// ─── Image Preprocessing ──────────────────────────────────────────────────────
-
-async function preprocessForOCR(uri: string, maxWidth: number): Promise<string> {
-  const result = await ImageManipulator.manipulateAsync(
-    uri,
-    [{ resize: { width: maxWidth } }],
-    { compress: 1, format: ImageManipulator.SaveFormat.PNG }
-  )
-  return result.uri
-}
-
-// JPEG at 82% quality — DCT quantization increases contrast for ink-on-paper text
-// by clamping near-white background pixels to white and near-black ink to black.
-async function preprocessForOCRJpeg(uri: string, maxWidth: number): Promise<string> {
-  const result = await ImageManipulator.manipulateAsync(
-    uri,
-    [{ resize: { width: maxWidth } }],
-    { compress: 0.82, format: ImageManipulator.SaveFormat.JPEG }
-  )
-  return result.uri
-}
-
-// Crop the source image to the bounding rectangle of all detected text blocks
-// plus 5% padding on each side.
-async function cropToTextBounds(uri: string, blocks: OCRBlock[]): Promise<string> {
-  const xs = blocks.flatMap(b => [b.bounds.x, b.bounds.x + b.bounds.width])
-  const ys = blocks.flatMap(b => [b.bounds.y, b.bounds.y + b.bounds.height])
-
-  const minX = Math.min(...xs)
-  const minY = Math.min(...ys)
-  const maxX = Math.max(...xs)
-  const maxY = Math.max(...ys)
-
-  const width = maxX - minX
-  const height = maxY - minY
-
-  if (width < 50 || height < 50) return uri
-
-  const pad = 0.05
-  const cropX = Math.max(0, minX - width * pad)
-  const cropY = Math.max(0, minY - height * pad)
-  const cropW = width * (1 + pad * 2)
-  const cropH = height * (1 + pad * 2)
-
-  const result = await ImageManipulator.manipulateAsync(
-    uri,
-    [{ crop: { originX: cropX, originY: cropY, width: cropW, height: cropH } }],
-    { compress: 1, format: ImageManipulator.SaveFormat.PNG }
-  )
-  return result.uri
 }
 
 // ─── ML Kit OCR ───────────────────────────────────────────────────────────────
@@ -159,8 +202,6 @@ async function runMLKitOCR(uri: string): Promise<OCRResult> {
 
   const sortedBlocks = sortBlocksByReadingOrder(rawBlocks)
   const tables: ExtractedTable[] = extractTables(sortedBlocks)
-
-  // Apply OCR correction only to prose blocks; table text stays pipe-delimited as-is
   const tableBlockIndices = getTableBlockIndices(tables, sortedBlocks)
   const nonTableBlocks = sortedBlocks.filter((_, i) => !tableBlockIndices.has(i))
 
@@ -172,6 +213,14 @@ async function runMLKitOCR(uri: string): Promise<OCRResult> {
   const { quality, issues } = assessQuality(text, sortedBlocks)
 
   return { text, confidence, blocks: sortedBlocks, tables, quality, issues }
+}
+
+// Composite score: word count × confidence, penalised for junk chars
+function scoreResult(r: OCRResult): number {
+  const words = r.text.split(/\s+/).filter(w => w.length >= 2)  // min 2-char words (filters noise)
+  const junk = (r.text.match(/[^\w\s$.,\-:/()'"%#@!?;[\]{}\\^~`=+<>|]/g) ?? []).length
+  const junkRatio = junk / Math.max(r.text.length, 1)
+  return words.length * r.confidence * (1 - junkRatio * 5)
 }
 
 // ─── Reading Order ────────────────────────────────────────────────────────────
@@ -199,14 +248,12 @@ function sortBlocksByReadingOrder(blocks: OCRBlock[]): OCRBlock[] {
     }
   }
 
-  for (const band of bands) {
-    band.sort((a, b) => a.bounds.x - b.bounds.x)
-  }
+  for (const band of bands) band.sort((a, b) => a.bounds.x - b.bounds.x)
 
   return bands.flat()
 }
 
-// ─── Table Rendering ─────────────────────────────────────────────────────────
+// ─── Table Rendering ──────────────────────────────────────────────────────────
 
 function renderTableAsText(table: import('../types').ExtractedTable): string {
   return table.rows.map(row => {
@@ -245,15 +292,12 @@ function assessQuality(
   const words = text.trim().split(/\s+/).filter(Boolean)
   const issues: string[] = []
 
-  // Raised thresholds — short notices/bills with 15-49 words are valid documents
   if (words.length < 15) {
     issues.push('Very little text detected — try better lighting or hold camera steadier')
   } else if (words.length < 50) {
     issues.push('Short document — check nothing is cut off')
   }
 
-  // Raised to 12% — legal/medical docs routinely contain §, —, ©, °, and other
-  // Unicode that are valid but outside the ASCII allowed-set above
   const junkChars = (text.match(/[^\w\s$.,\-:/()'"%#@!?;[\]{}\\^~`=+<>|]/g) ?? []).length
   if (junkChars / Math.max(text.length, 1) > 0.12) {
     issues.push('Many unrecognized characters — document may be blurry or photographed at an angle')
@@ -269,37 +313,44 @@ function assessQuality(
 
 function normalizeText(raw: string): string {
   return raw
-    // Whitespace cleanup
     .replace(/[^\S\n]+/g, ' ')
     .replace(/\n{3,}/g, '\n\n')
     .replace(/\f/g, '\n')
 
-    // Common OCR substitution errors near digits
-    // (intentionally NOT applied to `|` since that corrupts table pipe separators)
-    .replace(/l(?=\d{3,})/g, '1')          // l1234 → 11234
-    .replace(/\bI(?=\d{5,})/g, '1')        // I12345 → 112345 (ZIP, account numbers)
-    .replace(/(?<=\$\s{0,2})O/g, '0')       // $O.50 → $0.50
-    .replace(/(?<=\d)O(?=\d)/g, '0')        // 1O5 → 105
+    // ── OCR character substitution errors ─────────────────────────────────────
+    // Only apply near digits/currency to avoid corrupting real words
+    .replace(/l(?=\d{3,})/g, '1')           // l123456 → 1123456
+    .replace(/\bI(?=\d{5,})/g, '1')         // I90210 (zip/ID) → 190210
+    .replace(/(?<=\$\s{0,2})O/g, '0')        // $O → $0
+    .replace(/(?<=\d)O(?=\d)/g, '0')         // 3O5 → 305 (between digits)
+    .replace(/\bO(?=\d{4,})/g, '0')          // O1234 → 01234 (account numbers)
+    .replace(/(?<=\d)l(?=\d)/g, '1')         // 3l5 → 315 (l between digits)
+    .replace(/\brn\b/g, 'm')                 // "rn" standalone → "m" (common OCR split)
 
-    // Currency / number formatting fixes
-    .replace(/\$\s+(\d)/g, '$$$1')                    // $ 25 → $25
-    // Fix comma→period OCR error in dollar amounts: $2.150.00 or $2. 150.00 → $2,150.00
-    // Matches $A.BBB.CC where BBB is exactly 3 digits (the misread thousands separator)
-    .replace(/\$(\d{1,3})\.\s*(\d{3})\.(\d{2})\b/g, '$$$1,$2.$3')
-    // Collapse space-separated thousand: "1, 000" → "1,000"
-    // (?!\d) prevents matching "2, 2026" (date) since "202" is followed by digit "6"
-    .replace(/(\d{1,3}),\s+(\d{3})(?!\d)/g, '$1,$2')
-    .replace(/(\d)\s+\.\s+(\d{2})\b/g, '$1.$2')       // 25 . 00 → 25.00
+    // ── Currency / number formatting ──────────────────────────────────────────
+    .replace(/\$\s+(\d)/g, '$$$1')           // $ 50 → $50
+    .replace(/(\d{1,3}),\s+(\d{3})(?!\d)/g, '$1,$2')   // 1, 234 → 1,234
+    .replace(/(\d)\s+\.\s+(\d{2})\b/g, '$1.$2')         // 5 . 00 → 5.00
 
-    // Leader dots — both consecutive ("......") and spaced (". . . . .")
-    // (\.\s*){4,} matches any dot optionally followed by whitespace, repeated 4+ times
-    .replace(/(\.\s*){4,}/g, ' ')
+    // ── Leader dots (table of contents style) ─────────────────────────────────
+    .replace(/(\.\s*){5,}/g, ' ')
 
-    // Medical code formatting: "CPT 9 9213" → "CPT 99213"
-    .replace(/\b(CPT|ICD)\s*(\d)\s+(\d{3,})/gi, '$1 $2$3')
+    // ── Medical / legal code formatting ───────────────────────────────────────
+    .replace(/\b(CPT|ICD)\s*-?\s*(\d)\s+(\d{3,})/gi, '$1 $2$3')
 
-    // Date normalization: "01 / 15 / 2024" → "01/15/2024"
+    // ── Date normalization ─────────────────────────────────────────────────────
     .replace(/(\d{1,2})\s*[/\-]\s*(\d{1,2})\s*[/\-]\s*(\d{2,4})/g, '$1/$2/$3')
+
+    // ── Common word-level OCR fixes for medical/legal documents ──────────────
+    .replace(/\bPat1ent\b/gi, 'Patient')
+    .replace(/\bAm0unt\b/gi, 'Amount')
+    .replace(/\bTota1\b/gi, 'Total')
+    .replace(/\bBa1ance\b/gi, 'Balance')
+    .replace(/\bDue\s+D4te\b/gi, 'Due Date')
+    .replace(/\bSe1f[- ]Pay\b/gi, 'Self-Pay')
+    .replace(/\bInsu1ance\b/gi, 'Insurance')
+    .replace(/\bD1agnosis\b/gi, 'Diagnosis')
+    .replace(/\bPh0ne\b/gi, 'Phone')
 
     .trim()
 }
@@ -314,7 +365,6 @@ function estimateConfidence(blocks: OCRBlock[], text: string): number {
   const avgWordLen = words.reduce((s, w) => s + w.length, 0) / words.length
   const hasNumbers = /\d/.test(text)
   const hasUpperCase = /[A-Z]{2,}/.test(text)
-  // Penalise high junk-char ratio
   const junkRatio = (text.match(/[^\w\s$.,\-:/()'"%#@!?;]/g) ?? []).length / text.length
 
   let conf = Math.min(0.90, 0.35 + words.length * 0.01)

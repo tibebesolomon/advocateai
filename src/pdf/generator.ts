@@ -1,7 +1,9 @@
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
 import * as FileSystem from 'expo-file-system/legacy'
 
-const PDF_DIR = FileSystem.documentDirectory + 'letters/'
+// cacheDirectory is app-private and not backed up to cloud; PDFs are shared
+// immediately on creation so they don't need long-term persistence.
+const PDF_DIR = (FileSystem.cacheDirectory ?? FileSystem.documentDirectory) + 'letters/'
 const PAGE_WIDTH = 612   // US Letter
 const PAGE_HEIGHT = 792
 const MARGIN = 72        // 1 inch

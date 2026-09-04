@@ -1,5 +1,18 @@
 import type { DocumentType, DocumentMetadata, ScannedDocument, ExtractedTable, ChatMessage, PromptFormat } from '../types'
 
+// Strip characters that could close/inject into the chat template format,
+// preventing a malicious document from hijacking the LLM's system prompt.
+function sanitizeText(text: string, maxLen: number): string {
+  if (!text || maxLen <= 0) return ''
+  return text
+    .replace(/<\|im_start\|>|<\|im_end\|>|<\|end\|>|<\|eot_id\|>/gi, '')  // ChatML tokens
+    .replace(/\[INST\]|\[\/INST\]/g, '')                                    // Mistral tokens
+    .replace(/<start_of_turn>|<end_of_turn>/g, '')                          // Gemma tokens
+    .replace(/<\|begin_of_text\|>|<\|start_header_id\|>|<\|end_header_id\|>/g, '') // Llama3 tokens
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')                     // control chars
+    .slice(0, maxLen)
+}
+
 // ─── Model Chat Templates ─────────────────────────────────────────────────────
 
 // Active prompt format — updated by setModelFormat() when the engine loads a model.
@@ -67,7 +80,7 @@ Assert legal rights without being aggressive. Output only the letter text — no
 
 const DOC_CONTEXT: Record<DocumentType, string> = {
   MEDICAL_BILL:
-    'Medical bill. Patient rights: (1) itemized bill on request (HIPAA), (2) hospital Charity Care / financial assistance for uninsured or low-income patients, (3) dispute any charge within 30–180 days in writing. Flag any per-item charge that is unreasonably high (e.g. $10+ for a Tylenol, $20+ for a bandage, administrative "supply surcharges"). Note if patient is listed as Uninsured or Self-Pay — they almost always qualify for free or reduced-cost care under the hospital\'s Charity Care policy.',
+    'Medical bill. Patient rights: (1) itemized bill on request (HIPAA), (2) hospital Charity Care / financial assistance for uninsured or low-income patients, (3) dispute any charge within 30–180 days in writing. Flag any per-item charge that appears unreasonably high compared to retail price (common medications marked up >5×, administrative "supply surcharges"). Note if patient is listed as Uninsured or Self-Pay — they almost always qualify for free or reduced-cost care under the hospital\'s Charity Care policy.',
   INSURANCE_DENIAL:
     'Insurance claim denial. Patient rights: internal appeal within 180 days (ACA), external review, and emergency care coverage regardless of network.',
   EVICTION_NOTICE:
@@ -91,7 +104,7 @@ export function buildAnalysisPrompt(
   rawText: string,
   metadata: DocumentMetadata
 ): string {
-  const truncated = rawText.length > 1400 ? rawText.slice(0, 1400) + '\n[...truncated]' : rawText
+  const truncated = sanitizeText(rawText, 1400) + (rawText.length > 1400 ? '\n[...truncated]' : '')
 
   const userMessage = `Analyze this ${type.replace('_', ' ')} document and reply with a single JSON object.
 
@@ -106,18 +119,28 @@ Amount: ${metadata.amount != null ? `$${metadata.amount.toFixed(2)}` : 'not foun
 Reference: ${metadata.referenceNumber ?? 'not found'}
 Due date: ${metadata.dueDate ?? 'not found'}
 
-Rules:
-- summary: 1-2 plain English sentences explaining what this means for the person
-- severity: one of LOW, MEDIUM, HIGH, URGENT
-- keyFindings: array of plain English strings, each a separate finding (3-5 items)
-- For MEDICAL_BILL: each overpriced line item gets its own finding string naming the item and amount. If Uninsured/Self-Pay, include a finding about Charity Care eligibility.
-- recommendedActions: array of action objects
-- Each action has: type (one of DISPUTE_LETTER, APPEAL_LETTER, CALL_SCRIPT, INFORMATION), title (short), description (one sentence), priority (1=highest)
-- rightsReminder: one sentence about a legal right, or null
-- deadline: the due date if found, or null
+SEVERITY GUIDE — choose the one that matches:
+- LOW: Bill looks routine and correct. Amounts are reasonable. No obvious errors. Person should pay or keep for records.
+- MEDIUM: Some questions worth asking, but not urgent. Minor concerns or missing information.
+- HIGH: Clear evidence of errors, unreasonable charges, or rights being affected.
+- URGENT: Immediate action required — eviction, appeal deadline, legal threat.
 
-Example of correct output format:
-{"summary":"You owe $500 on a hospital bill due in 2 weeks. You may be able to reduce or eliminate this bill.","severity":"HIGH","keyFindings":["Total amount due is $500 by January 15","You may qualify for hospital financial assistance","$50 charge for aspirin appears unreasonably high"],"recommendedActions":[{"type":"DISPUTE_LETTER","title":"Request Itemized Bill","description":"Write to the hospital asking for a full itemized statement of all charges.","priority":1},{"type":"CALL_SCRIPT","title":"Call Billing Department","description":"Call to ask about financial assistance programs.","priority":2}],"rightsReminder":"You have the right to request a fully itemized bill under HIPAA at any time.","deadline":"January 15"}
+Rules:
+- summary: 1-2 plain English sentences explaining what this means for the person. If the document looks correct and legitimate, say so clearly.
+- severity: pick from the SEVERITY GUIDE above — do NOT default to HIGH if the document looks normal
+- keyFindings: array of 2-4 plain English findings based ONLY on what is in the document
+- For MEDICAL_BILL: only flag line items that are explicitly in the document AND clearly excessive. If charges look reasonable, do NOT flag them.
+- recommendedActions: if severity is LOW, use INFORMATION type only (no dispute letters for a normal correct bill). Use DISPUTE_LETTER only when there is a clear, specific problem in the document.
+- Each action has: type (one of DISPUTE_LETTER, APPEAL_LETTER, CALL_SCRIPT, INFORMATION), title (short), description (one sentence), priority (1=highest)
+- rightsReminder: one sentence about a legal right relevant to this situation, or null
+- deadline: the due date if found, or null
+- CRITICAL: Base everything strictly on the DOCUMENT text above. Do not invent charges, items, or problems that are not in the document.
+
+Example for a NORMAL bill (no problems found):
+{"summary":"This appears to be a standard bill. The charges look reasonable and there are no obvious errors.","severity":"LOW","keyFindings":["Total due is $120 by March 15","No unusual or duplicate charges found"],"recommendedActions":[{"type":"INFORMATION","title":"Keep for Your Records","description":"This bill appears correct — keep a copy for your records and pay by the due date if you can.","priority":1}],"rightsReminder":"You can always request an itemized statement in writing if you want more detail.","deadline":"March 15"}
+
+Example for a bill WITH problems:
+{"summary":"You owe $500 on a hospital bill due in 2 weeks. Some charges may be worth disputing.","severity":"HIGH","keyFindings":["Total amount due is $500 by January 15","You may qualify for hospital financial assistance"],"recommendedActions":[{"type":"DISPUTE_LETTER","title":"Request Itemized Bill","description":"Write to the hospital asking for a full itemized statement of all charges.","priority":1},{"type":"CALL_SCRIPT","title":"Call Billing Department","description":"Call to ask about financial assistance programs.","priority":2}],"rightsReminder":"You have the right to request a fully itemized bill under HIPAA at any time.","deadline":"January 15"}
 
 Now output the JSON for the document above:`
 
@@ -136,44 +159,48 @@ export function buildAnomalyPrompt(
   rawText: string,
   tables: ExtractedTable[]
 ): string {
-  const truncated = rawText.length > 1400 ? rawText.slice(0, 1400) + '\n[...truncated]' : rawText
+  const truncated = sanitizeText(rawText, 1400) + (rawText.length > 1400 ? '\n[...truncated]' : '')
   const tableSection = tables.length > 0
     ? '\n\nLINE ITEMS (TABULAR):\n' + tables.map(t =>
         t.rows.map(r => r.cells.map(c => c.text).join(' | ')).join('\n')
       ).join('\n\n')
     : ''
 
-  const userMessage = `Detect billing errors, illegal terms, and anomalies in this ${type.replace(/_/g, ' ')}.
+  const userMessage = `Check this ${type.replace(/_/g, ' ')} for clear billing errors or illegal terms.
 
 DOCUMENT:
 ${truncated}${tableSection}
 
+IMPORTANT: Most documents are correct. Only flag something if the evidence is explicit and clear in the document above. If the document looks normal, return {"anomalies":[]}.
+
 Return a JSON object with a single key "anomalies" containing an array. Each element has:
 - type: one of OVERCHARGE, DUPLICATE_CHARGE, UNAUTHORIZED, ILLEGAL_TERM, MISSING_DISCLOSURE, UNBUNDLING
-- description: plain English explanation of the problem (1-2 sentences)
-- lineItem: the exact item name from the document, or null
-- amount: the dollar amount if applicable, or null
+- description: plain English explanation, naming the exact item and amount from the document
+- lineItem: the exact item name as written in the document, or null
+- amount: the dollar amount as written in the document, or null
 - severity: one of LOW, MEDIUM, HIGH, URGENT
 
-Rules for MEDICAL_BILL:
-- Flag any supply/medication priced >5× typical retail (e.g. $20+ per Tylenol, $15+ per saline bag)
-- Flag facility fees added to already-itemized line items (unbundling)
-- Flag "self-pay" patients who were not informed of charity care (MISSING_DISCLOSURE)
-- Flag duplicate CPT codes for the same procedure
+Rules — only flag if clearly evident in the DOCUMENT above:
+- OVERCHARGE: only flag a specific line item that is explicitly listed in the document AND its price is obviously excessive (e.g. $50+ for a single common tablet, not just "high")
+- DUPLICATE_CHARGE: only if the exact same CPT code or service description appears twice with the same date
+- UNAUTHORIZED: only if a fee is charged that the document itself says was not agreed to
+- ILLEGAL_TERM: only if a clause in the document clearly violates a stated law
+- MISSING_DISCLOSURE: only if the document itself indicates the patient is uninsured/self-pay but no charity care option is mentioned
+- UNBUNDLING: only if the document shows a facility fee AND separately itemized components for the same service
 
-Rules for EVICTION_NOTICE:
-- Flag self-help eviction threats (illegal in all US states)
-- Flag fees not specified in the lease (UNAUTHORIZED)
-- Flag illegal lease terms (waiver of right to habitable premises, etc.)
+Do NOT flag:
+- Charges that seem high but are not listed in the document
+- Items not explicitly in the document
+- Anything based on assumption or general medical pricing knowledge alone
 
-Output ONLY the JSON. If no anomalies found, return {"anomalies":[]}.`
+Output ONLY the JSON. If the document looks correct with no clear errors, return {"anomalies":[]}.`
 
   return formatPrompt(SYSTEM_ANOMALY, userMessage)
 }
 
 export function buildLetterPrompt(document: ScannedDocument, letterType: string): string {
   const { type, rawText, metadata } = document
-  const excerpt = rawText.length > 1000 ? rawText.slice(0, 1000) + '\n[...]' : rawText
+  const excerpt = sanitizeText(rawText, 1000) + (rawText.length > 1000 ? '\n[...]' : '')
   const today = new Date().toLocaleDateString('en-US', {
     year: 'numeric',
     month: 'long',
@@ -183,9 +210,10 @@ export function buildLetterPrompt(document: ScannedDocument, letterType: string)
   const isMedicalBill = type === 'MEDICAL_BILL'
   const medicalExtra = isMedicalBill ? `
 MEDICAL BILL SPECIFIC REQUIREMENTS:
-- Identify and name each individual line item that appears unreasonably priced (e.g. $65 for Tylenol, $85 for a bandage/supply surcharge) and challenge it by name and amount
+- IMPORTANT: Only reference line items, medications, and charges that are explicitly mentioned in the ORIGINAL DOCUMENT EXCERPT above. Do NOT invent, assume, or use example items not present in the document.
+- Identify and name each line item from the document that appears unreasonably priced, citing the exact name and amount as written in the document
 - Demand a fully itemized bill with CPT code descriptions
-- If the patient appears to be Uninsured or Self-Pay, explicitly request a Charity Care / Financial Assistance application and state that federal law requires hospitals to screen uninsured patients
+- If the patient appears to be Uninsured or Self-Pay based on the document, explicitly request a Charity Care / Financial Assistance application and state that federal law requires hospitals to screen uninsured patients
 - Request that all charges be reviewed against fair market rates` : ''
 
   const userMessage = `Write a complete ${letterType} letter for the following ${type.replace('_', ' ')} document.
@@ -224,12 +252,12 @@ Reference #: ${document.metadata.referenceNumber ?? 'N/A'}
 Write a step-by-step call script as a numbered list. Use simple, calm language.
 Include: what to say when answered, what information to have ready, what to ask for, and how to end the call.`
 
-  return formatPrompt(SYSTEM_ADVOCATE, userMessage)
+  return formatPrompt(SYSTEM_LETTER_WRITER, userMessage)
 }
 
 export function buildFormPrompt(doc: ScannedDocument): string {
   const { type, rawText, metadata } = doc
-  const excerpt = rawText.length > 1000 ? rawText.slice(0, 1000) + '\n[...]' : rawText
+  const excerpt = sanitizeText(rawText, 1000) + (rawText.length > 1000 ? '\n[...]' : '')
   const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
 
   const userMessage = `Create a complete, printable form for this ${type.replace(/_/g, ' ')} document.
@@ -383,8 +411,8 @@ export function buildReplyPrompt(
   institutionReply: string
 ): string {
   const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
-  const origExcerpt = originalLetter.length > 800 ? originalLetter.slice(0, 800) + '\n[...]' : originalLetter
-  const replyExcerpt = institutionReply.length > 600 ? institutionReply.slice(0, 600) + '\n[...]' : institutionReply
+  const origExcerpt = sanitizeText(originalLetter, 800) + (originalLetter.length > 800 ? '\n[...]' : '')
+  const replyExcerpt = sanitizeText(institutionReply, 600) + (institutionReply.length > 600 ? '\n[...]' : '')
 
   const userMessage = `Write a professional follow-up response letter.
 

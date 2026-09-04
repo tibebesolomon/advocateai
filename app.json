@@ -2,7 +2,7 @@
   "expo": {
     "name": "AdvocateAI",
     "slug": "advocate-ai",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "automatic",
@@ -35,15 +35,7 @@
       ],
       "expo-audio",
       "expo-font",
-      [
-        "expo-notifications",
-        {
-          "icon": "./assets/notification-icon.png",
-          "color": "#4A90E2",
-          "sounds": []
-        }
-      ],
-      "expo-secure-store",
+"expo-secure-store",
       "expo-asset"
     ],
     "android": {
@@ -61,7 +53,7 @@
         "android.permission.INTERNET",
         "android.permission.ACCESS_NETWORK_STATE"
       ],
-      "versionCode": 9
+      "versionCode": 10
     },
     "ios": {
       "bundleIdentifier": "org.advocateai.app",

@@ -5,12 +5,15 @@ import { CameraView, useCameraPermissions } from 'expo-camera'
 import { router } from 'expo-router'
 import { MaterialIcons } from '@expo/vector-icons'
 import * as Haptics from 'expo-haptics'
+import * as ImagePicker from 'expo-image-picker'
 import { Colors, FontSize, Radius, Spacing } from '@/ui/theme'
+import { queueCapture } from '@/ocr/pendingCapture'
 
 export default function ScanScreen() {
   const [permission, requestPermission] = useCameraPermissions()
   const [flash, setFlash] = useState<'off' | 'on'>('off')
   const [capturing, setCapturing] = useState(false)
+  const [capturedPages, setCapturedPages] = useState<string[]>([])
   const cameraRef = useRef<CameraView>(null)
 
   if (!permission) return <View style={styles.container} />
@@ -32,26 +35,58 @@ export default function ScanScreen() {
     )
   }
 
+  function navigateToReview(pages: string[]) {
+    if (pages.length === 0) return
+    // Store URIs in module-level store — avoids URL-encoding corruption of file:/// paths
+    queueCapture({ uris: pages })
+    router.replace('/review')
+  }
+
   async function capture() {
     if (capturing || !cameraRef.current) return
     setCapturing(true)
     await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy)
 
-    // Brief pause so autofocus can settle after the button tap vibration
-    await new Promise(r => setTimeout(r, 400))
+    // Longer pause so autofocus can settle after vibration
+    await new Promise(r => setTimeout(r, 700))
 
     try {
       const photo = await cameraRef.current.takePictureAsync({
-        quality: 1,           // maximum — we apply our own compression in preprocessing
+        quality: 1,
         skipProcessing: false,
-        exif: false,          // strip EXIF to avoid GPS/device metadata in stored images
+        exif: false,
       })
       if (photo?.uri) {
-        router.replace({ pathname: '/review', params: { uri: photo.uri } })
+        const newPages = [...capturedPages, photo.uri]
+        setCapturedPages(newPages)
       }
     } catch {
       Alert.alert('Capture failed', 'Could not take photo. Please try again.')
+    } finally {
       setCapturing(false)
+    }
+  }
+
+  // System camera: better autofocus + built-in crop editor
+  async function captureWithSystemCamera() {
+    try {
+      const { status } = await ImagePicker.requestCameraPermissionsAsync()
+      if (status !== 'granted') {
+        Alert.alert('Camera access needed', 'Allow camera access in Settings.')
+        return
+      }
+      const result = await ImagePicker.launchCameraAsync({
+        quality: 1,
+        allowsEditing: true,   // built-in crop: user squares up the document
+        allowsMultipleSelection: false,
+        exif: false,
+      })
+      if (!result.canceled && result.assets[0]) {
+        const newPages = [...capturedPages, result.assets[0].uri]
+        setCapturedPages(newPages)
+      }
+    } catch {
+      Alert.alert('Camera failed', 'Could not open camera. Please try again.')
     }
   }
 
@@ -85,6 +120,15 @@ export default function ScanScreen() {
         >
           <MaterialIcons name="close" size={28} color={Colors.textPrimary} />
         </TouchableOpacity>
+
+        {/* Page counter badge */}
+        {capturedPages.length > 0 && (
+          <View style={styles.pageCountBadge}>
+            <MaterialIcons name="check-circle" size={14} color={Colors.success} />
+            <Text style={styles.pageCountText}>{capturedPages.length} page{capturedPages.length > 1 ? 's' : ''} captured</Text>
+          </View>
+        )}
+
         <TouchableOpacity
           style={styles.iconBtn}
           onPress={() => setFlash((f) => (f === 'off' ? 'on' : 'off'))}
@@ -100,20 +144,50 @@ export default function ScanScreen() {
 
       {/* Capture button */}
       <View style={styles.bottomBar}>
-        <View style={styles.tipsRow}>
-          <View style={styles.tipChip}><MaterialIcons name="wb-sunny" size={12} color="rgba(255,255,255,0.85)" /><Text style={styles.tipText}>Good light</Text></View>
-          <View style={styles.tipChip}><MaterialIcons name="straighten" size={12} color="rgba(255,255,255,0.85)" /><Text style={styles.tipText}>Flat surface</Text></View>
-          <View style={styles.tipChip}><MaterialIcons name="crop-free" size={12} color="rgba(255,255,255,0.85)" /><Text style={styles.tipText}>Fill frame</Text></View>
+        {capturedPages.length === 0 ? (
+          <View style={styles.tipsRow}>
+            <View style={styles.tipChip}><MaterialIcons name="wb-sunny" size={12} color="rgba(255,255,255,0.85)" /><Text style={styles.tipText}>Good light</Text></View>
+            <View style={styles.tipChip}><MaterialIcons name="straighten" size={12} color="rgba(255,255,255,0.85)" /><Text style={styles.tipText}>Lay doc flat</Text></View>
+            <View style={styles.tipChip}><MaterialIcons name="crop-free" size={12} color="rgba(255,255,255,0.85)" /><Text style={styles.tipText}>Fill frame</Text></View>
+          </View>
+        ) : (
+          <Text style={styles.nextPageHint}>Scan next page or tap Done</Text>
+        )}
+
+        <View style={styles.captureRow}>
+          {/* Done button — only shown after first page */}
+          {capturedPages.length > 0 && (
+            <TouchableOpacity
+              style={styles.doneBtn}
+              onPress={() => navigateToReview(capturedPages)}
+              accessibilityLabel={`Done — ${capturedPages.length} pages`}
+            >
+              <MaterialIcons name="check" size={20} color="#fff" />
+              <Text style={styles.doneBtnText}>Done ({capturedPages.length})</Text>
+            </TouchableOpacity>
+          )}
+
+          <TouchableOpacity
+            style={[styles.captureBtn, capturing && styles.captureBtnBusy]}
+            onPress={capture}
+            disabled={capturing}
+            accessibilityRole="button"
+            accessibilityLabel={capturedPages.length > 0 ? 'Capture next page' : 'Capture document'}
+          >
+            <View style={styles.captureInner} />
+          </TouchableOpacity>
+
+          {/* System camera with crop — better quality for detailed text */}
+          <TouchableOpacity
+            style={styles.altCameraBtn}
+            onPress={captureWithSystemCamera}
+            disabled={capturing}
+            accessibilityLabel="Use system camera with crop"
+          >
+            <MaterialIcons name="crop" size={18} color="#fff" />
+            <Text style={styles.altCameraText}>Crop Mode</Text>
+          </TouchableOpacity>
         </View>
-        <TouchableOpacity
-          style={[styles.captureBtn, capturing && styles.captureBtnBusy]}
-          onPress={capture}
-          disabled={capturing}
-          accessibilityRole="button"
-          accessibilityLabel="Capture document"
-        >
-          <View style={styles.captureInner} />
-        </TouchableOpacity>
       </View>
     </View>
   )
@@ -189,6 +263,23 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
   },
 
+  pageCountBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    borderRadius: Radius.round,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderWidth: 1,
+    borderColor: Colors.success,
+  },
+  pageCountText: {
+    color: Colors.success,
+    fontSize: FontSize.sm,
+    fontWeight: '700',
+  },
+
   bottomBar: {
     position: 'absolute',
     bottom: 48,
@@ -197,6 +288,36 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: Spacing.md,
+  },
+  nextPageHint: {
+    color: 'rgba(255,255,255,0.9)',
+    fontSize: FontSize.sm,
+    fontWeight: '600',
+    textShadowColor: '#000',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
+  },
+  captureRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: Spacing.lg,
+    width: '100%',
+    paddingHorizontal: Spacing.xl,
+  },
+  doneBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: Colors.success,
+    borderRadius: Radius.round,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+  },
+  doneBtnText: {
+    color: '#fff',
+    fontSize: FontSize.md,
+    fontWeight: '700',
   },
   tipsRow: {
     flexDirection: 'row',
@@ -233,5 +354,21 @@ const styles = StyleSheet.create({
     height: 56,
     borderRadius: 28,
     backgroundColor: '#fff',
+  },
+  altCameraBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    borderRadius: Radius.round,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.3)',
+  },
+  altCameraText: {
+    color: '#fff',
+    fontSize: FontSize.sm,
+    fontWeight: '600',
   },
 })

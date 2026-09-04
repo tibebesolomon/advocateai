@@ -96,6 +96,8 @@ class AIEngine {
   private ctx: import('llama.rn').LlamaContext | null = null
   private initializing = false
   private initQueue: Array<() => void> = []
+  private lastCompletionAt = 0
+  private static readonly COOLDOWN_MS = 1500 // min gap between completions
 
   // True once a successful initLlama() call has confirmed JSI is working.
   get isNativeAvailable(): boolean {
@@ -164,7 +166,8 @@ class AIEngine {
           batchSize: config?.batchSize ?? DEFAULTS.batchSize,
         })
         _nativeAvailable = true
-        // Read model-meta.json to set the correct prompt format for this model family.
+        // Read model-meta.json to set the correct prompt format, then delete it
+        // so it doesn't linger as unencrypted model metadata on disk.
         try {
           const metaPath = MODELS_DIR + MODEL_META_FILENAME
           const metaInfo = await FileSystem.getInfoAsync(metaPath)
@@ -172,6 +175,7 @@ class AIEngine {
             const raw = await FileSystem.readAsStringAsync(metaPath)
             const meta = JSON.parse(raw) as { format?: string }
             if (meta.format) setModelFormat(meta.format as PromptFormat)
+            await FileSystem.deleteAsync(metaPath, { idempotent: true })
           }
         } catch { /* keep default chatml if meta unreadable */ }
       } catch (loadErr) {
@@ -217,6 +221,11 @@ class AIEngine {
     temperature: number,
     onToken?: TokenCallback
   ): Promise<string> {
+    // Rate limiting: enforce minimum gap between completions to protect battery/CPU
+    const now = Date.now()
+    const wait = AIEngine.COOLDOWN_MS - (now - this.lastCompletionAt)
+    if (wait > 0) await new Promise(r => setTimeout(r, wait))
+
     await this.initialize()
     if (!this.ctx) throw new Error('ENGINE_NOT_READY')
 
@@ -232,7 +241,11 @@ class AIEngine {
       onToken ? (data: { token: string }) => onToken(data.token) : undefined
     )
 
-    return result.text.trim()
+    this.lastCompletionAt = Date.now()
+    return result.text
+      .replace(/^```[a-z]*\n?/i, '')  // strip opening code fence
+      .replace(/\n?```\s*$/i, '')      // strip closing code fence
+      .trim()
   }
 
   // ── Public API ────────────────────────────────────────────────────────────

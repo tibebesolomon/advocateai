@@ -2,7 +2,9 @@ import { PDFDocument, StandardFonts, rgb } from 'pdf-lib'
 import * as FileSystem from 'expo-file-system/legacy'
 import type { ScannedDocument, GeneratedLetter, Thread } from '../types'
 
-const EXPORT_DIR = (FileSystem.documentDirectory ?? '') + 'exports/'
+// cacheDirectory keeps exports app-private and auto-cleared; files are shared
+// immediately after generation so long-term persistence is not needed.
+const EXPORT_DIR = (FileSystem.cacheDirectory ?? FileSystem.documentDirectory ?? '') + 'exports/'
 const PAGE_W = 612
 const PAGE_H = 792
 const MARGIN = 72

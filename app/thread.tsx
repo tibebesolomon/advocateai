@@ -32,13 +32,15 @@ export default function ThreadScreen() {
 
   useEffect(() => {
     if (!id) return
-    getDocument(id).then(loaded => {
-      if (!loaded) return
+    let mounted = true
+    ;(async () => {
+      const loaded = await getDocument(id)
+      if (!loaded || !mounted) return
       setDoc(loaded)
-      const t = getOrCreateThread(id)
-      setThread(t)
-      setMessages(t.messages)
-    })
+      const t = await getOrCreateThread(id)
+      if (mounted) { setThread(t); setMessages(t.messages) }
+    })()
+    return () => { mounted = false }
   }, [id])
 
   function toggleExpand(msgId: string) {
@@ -55,7 +57,7 @@ export default function ThreadScreen() {
     setSubmitting(true)
 
     const replyText = institutionReply.trim()
-    const instMsg = addThreadMessage({
+    const instMsg = await addThreadMessage({
       threadId: thread.id,
       sender: 'institution',
       content: replyText,
@@ -79,7 +81,7 @@ export default function ThreadScreen() {
         setAiStreamText(t => t + token)
       })
 
-      const aiMsg = addThreadMessage({
+      const aiMsg = await addThreadMessage({
         threadId: thread.id,
         sender: 'user',
         content: aiText,
